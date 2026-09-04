@@ -9,7 +9,8 @@ const recenterBtn = document.getElementById("recenter-btn");
 const viewfinderEl = document.getElementById("viewfinder");
 const levelLightEl = document.getElementById("level-light");
 const escapeRingFillEl = document.getElementById("escape-ring-fill");
-const statusIconTapEl = document.getElementById("status-icon-tap");
+const lockIconLockedEl = document.getElementById("lock-icon-locked");
+const lockIconUnlockedEl = document.getElementById("lock-icon-unlocked");
 const statusIconPauseEl = document.getElementById("status-icon-pause");
 const debugToggleBtn = document.getElementById("debug-toggle");
 const debugPanelEl = document.getElementById("debug-panel");
@@ -87,6 +88,15 @@ let currentDeltaGamma = 0;
 //    a roll is already in progress (redirecting is easier once you're
 //    already mid-shake than starting cold) than while idle.
 //
+// Crossing that bar isn't enough on its own, though: the die can only
+// actually ROLL (commit to a new result) while the screen is being held
+// down (pointerHeld — see the pointerdown/up listeners below and the lock
+// icon that reflects this state). A qualifying shake without a hold can't
+// roll it — instead it "pulls" the die toward the shake's direction (see
+// pullDice/updatePull) as a felt-but-denied cue, with no new result and no
+// turning to reveal a face; the die is otherwise left exactly as it was
+// (still idle-spinning, or still frozen if it already was).
+//
 // A shake redirects the die instantly — see rollDice() — so the cooldown
 // only needs to be long enough to stop a single continuous shake from
 // retriggering many times a second (devicemotion fires ~60Hz), not to
@@ -110,9 +120,11 @@ let lastRollTriggerAt = 0;
 // Auto pause-detection: whenever the phone's own physical motion (not the
 // die's spin state, which is driven by held tilt angle rather than actual
 // movement) stays below a small angular-speed threshold for a sustained
-// stretch, that counts as a "pause" and reveals the current face — the same
-// action a tap performs, just hands-free. Requires genuine movement to have
-// happened first, so it can't fire the instant the page loads. Both bounds
+// stretch, that counts as a "pause" and reveals the current face — this is
+// the only way a reveal happens hands-free, and (along with a held-and-
+// shaken roll) the only way it happens at all now that a plain tap no
+// longer does. Requires genuine movement to have happened first, so it
+// can't fire the instant the page loads. Both bounds
 // are deliberately generous — natural hand tremor while holding a phone
 // "still" is well above 0°/s, and a real intentional pause is worth waiting
 // a beat to confirm, so this shouldn't fire on a brief mid-motion lull.
@@ -163,19 +175,31 @@ function handleMotionEvent(event) {
     // from idle — you're already mid-shake at that point.
     const activeThreshold = rolling ? ROTATION_REDIRECT_THRESHOLD_DEG : ROTATION_TRIGGER_THRESHOLD_DEG;
     const instantSpike = rotSpeed >= INSTANT_SPIKE_RATE_DEG_PER_SEC;
-    const shouldTrigger = cooldownClear && (instantSpike || rotationAccumDeg > activeThreshold);
+    const shouldFire = cooldownClear && (instantSpike || rotationAccumDeg > activeThreshold);
 
     // Snapshot before any reset below, so a recorded sample reflects the
     // accumulator value that actually decided this tick.
     if (debugRecording) {
-      recordDebugSample(now, rateValid ? rate.beta : null, rateValid ? rate.gamma : null, rotSpeed, rotationAccumDeg, activeThreshold, shouldTrigger, instantSpike);
+      recordDebugSample(now, rateValid ? rate.beta : null, rateValid ? rate.gamma : null, rotSpeed, rotationAccumDeg, activeThreshold, shouldFire, instantSpike);
     }
     updateDebugLiveReadout(rotSpeed, rotationAccumDeg);
 
-    // No `!rolling` guard: a shake can interrupt and redirect a roll
-    // already in progress, not just start a fresh one.
-    if (shouldTrigger) {
-      rollDice(Math.max(rotationAccumPeakRate, rotSpeed), rateValid ? rate.beta : undefined, rateValid ? rate.gamma : undefined);
+    if (shouldFire) {
+      const peak = Math.max(rotationAccumPeakRate, rotSpeed);
+      const beta = rateValid ? rate.beta : undefined;
+      const gamma = rateValid ? rate.gamma : undefined;
+      // Held: actually roll (no `!rolling` guard — a shake can interrupt
+      // and redirect a roll already in progress, not just start a fresh
+      // one). Not held: can't roll, so pull instead — but only from a
+      // resting state, never on top of a roll/settle animation already
+      // playing (that can only have started while held, and finishes on
+      // its own regardless of whether the hold is later released).
+      if (pointerHeld) {
+        rollDice(peak, beta, gamma);
+      } else if (!rolling && !settleState) {
+        pullDice(peak, beta, gamma);
+      }
+      lastRollTriggerAt = now;
       rotationAccumDeg = 0;
       rotationAccumPeakRate = 0;
     }
@@ -205,23 +229,26 @@ function recenterTilt() {
 
 recenterBtn.addEventListener("click", recenterTilt);
 
-// Bubble-level style indicator, built into the viewfinder overlay as a dim
-// light rather than a dot — confined to a small patch beneath where the die
-// sits (LEVEL_LIGHT_BASE_Y), not the center of the stage, so it only ever
-// drifts within that patch as the phone tilts. Centered on
-// frozenZeroBeta/Gamma — the same "level" reference the resting-tilt fill
-// uses — so pausing (tap or auto pause-detection) recalibrates it right
-// back to the middle of that patch. Before the first pause it's centered on
-// physically flat (frozenZero starts at 0,0).
-const LEVEL_LIGHT_BASE_Y = 74; // in the 0-100 SVG viewBox; below stage-center (50), beneath the die
-const LEVEL_LIGHT_X_RANGE = 24;
-const LEVEL_LIGHT_Y_RANGE = 5;
+// Bubble-level style indicator, drawn as a dim light BEHIND the die (see
+// #level-light-layer in index.html, positioned before .dice-canvas in the
+// DOM) rather than a dot on top of it. It's sized to roughly the die's own
+// footprint and centered on it, so at rest the die's opaque render covers
+// it completely; tilting shifts it off-center by only a little, letting it
+// peek out past the die's edge on the side you're leaning toward while the
+// opposite edge stays covered. That keeps the die always fully visible —
+// this never draws over it — while still giving a live, subtle sense of
+// which way the tilt is going. Centered on frozenZeroBeta/Gamma — the same
+// "level" reference the resting-tilt fill uses — so pausing (auto
+// pause-detection) recalibrates it right back to dead center behind the
+// die. Before the first pause it's centered on physically flat (frozenZero
+// starts at 0,0).
+const LEVEL_LIGHT_OFFSET_RANGE = 10; // in the 0-100 SVG viewBox; kept small so it stays mostly hidden behind the die
 
 function updateLevelLight() {
   const nx = Math.max(-1, Math.min(1, (filteredGamma - frozenZeroGamma) / TILT_VISUAL_RANGE_DEG));
   const ny = Math.max(-1, Math.min(1, (filteredBeta - frozenZeroBeta) / TILT_VISUAL_RANGE_DEG));
-  levelLightEl.setAttribute("cx", String(50 + nx * LEVEL_LIGHT_X_RANGE));
-  levelLightEl.setAttribute("cy", String(LEVEL_LIGHT_BASE_Y + ny * LEVEL_LIGHT_Y_RANGE));
+  levelLightEl.setAttribute("cx", String(50 + nx * LEVEL_LIGHT_OFFSET_RANGE));
+  levelLightEl.setAttribute("cy", String(50 + ny * LEVEL_LIGHT_OFFSET_RANGE));
 }
 
 function updatePauseDetection(now, dt) {
@@ -242,7 +269,7 @@ function updatePauseDetection(now, dt) {
 
   if (hasMovedSincePause && !frozen && diceMesh && now - stillSinceAt > PAUSE_DURATION_MS) {
     hasMovedSincePause = false;
-    pauseAndReveal("pause");
+    pauseAndReveal();
   }
 }
 
@@ -481,12 +508,13 @@ const SETTLE_DURATION_MS = 450;
 const MAX_SPIN_SPEED = Math.PI * 1.5; // radians/sec at full tilt range
 const IDLE_SPIN_DEADZONE = 0.01; // ignore sub-noise angular velocity (tightened from 0.02)
 
-// Pausing (tap, or the phone simply going still — see updatePauseDetection)
+// Pausing (the phone going physically still — see updatePauseDetection)
 // snaps the die onto whichever face is currently nearest the camera and
 // reveals it, then freezes there with a fresh "level" reference. There's no
 // tilt threshold that resumes spinning on its own — once it's stopped, it
-// stays stopped until you tap again or shake. TILT_VISUAL_RANGE_DEG is only
-// a display scale for the resting-tilt fill/level dot now, not a trigger.
+// stays stopped until a held-and-shaken roll (see rollDice/pointerHeld)
+// starts it again. TILT_VISUAL_RANGE_DEG is only a display scale for the
+// resting-tilt fill/level light now, not a trigger.
 let frozen = false;
 let frozenZeroBeta = 0;
 let frozenZeroGamma = 0;
@@ -646,8 +674,8 @@ function updateIdleSpin(dt) {
 }
 
 // Purely a visual readout of how far you've tilted since the die came to
-// rest — no threshold, tilting never resumes spinning on its own anymore.
-// Only a tap or a shake does that.
+// rest — no threshold, tilting never resumes spinning on its own. Only a
+// held-and-shaken roll does that.
 function updateFrozenFill() {
   const deltaBeta = filteredBeta - frozenZeroBeta;
   const deltaGamma = filteredGamma - frozenZeroGamma;
@@ -676,16 +704,18 @@ function findNearestFaceIndex() {
 }
 
 // Snaps the die onto whichever face is currently nearest the camera and
-// reveals it. Triggered by a tap or by the phone going physically still
-// (see updatePauseDetection) — either way, "pausing" is what shows a result.
-function pauseAndReveal(source) {
+// reveals it. Triggered only by the phone going physically still (see
+// updatePauseDetection) — a plain tap no longer does this on its own; the
+// die can only be committed to a new result by holding the screen down
+// while shaking it (see rollDice/pointerHeld).
+function pauseAndReveal() {
   if (!diceMesh) return;
   rollState = null;
 
   // Recalibrate the "level" reference right now, not after the settle
   // animation finishes — the moment you pause is what defines the new
-  // resting center, so the level dot and escape-threshold fill both reset
-  // instantly rather than lagging ~300ms behind the tap.
+  // resting center, so the level light and escape-threshold fill both reset
+  // instantly rather than lagging ~300ms behind the pause.
   frozenZeroBeta = filteredBeta;
   frozenZeroGamma = filteredGamma;
   escapeRingFillEl.setAttribute("height", "0");
@@ -711,7 +741,6 @@ function pauseAndReveal(source) {
     fromQuat: diceMesh.quaternion.clone(),
     finalQuat,
     resultIndex: nearestIndex,
-    source,
   };
 }
 
@@ -724,9 +753,8 @@ function updateSettle() {
 
   if (t >= 1) {
     const resultIndex = settleState.resultIndex;
-    const source = settleState.source;
     settleState = null;
-    finishRoll(resultIndex, source);
+    finishRoll(resultIndex, true); // true: revealed by pauseAndReveal (going still), not a shake-triggered roll
     // The level/escape-threshold reference was already recalibrated back in
     // pauseAndReveal(); just start the "resting" state now that the visual
     // settle has actually finished.
@@ -734,18 +762,38 @@ function updateSettle() {
   }
 }
 
-// The tap surface is the whole screen (not just the die itself), except for
-// actual buttons — clicks on those should behave normally and not also
-// trigger a reveal.
+// The hold surface is the whole screen (not just the die itself), except
+// for actual buttons — clicks on those should behave normally and not also
+// arm the roll gate. Holding down doesn't reveal or move the die by
+// itself; it only determines whether a shake that happens while held can
+// actually roll it (see handleMotionEvent) — reflected live by the lock
+// icon in the viewfinder.
 function isInteractiveElement(target) {
   return target.closest("button, a, input, select, textarea") !== null;
 }
 
+let pointerHeld = false;
+
+function setPointerHeld(held) {
+  if (pointerHeld === held) return;
+  pointerHeld = held;
+  if (held) {
+    lockIconLockedEl.setAttribute("hidden", "");
+    lockIconUnlockedEl.removeAttribute("hidden");
+  } else {
+    lockIconUnlockedEl.setAttribute("hidden", "");
+    lockIconLockedEl.removeAttribute("hidden");
+  }
+}
+
 document.addEventListener("pointerdown", (event) => {
-  if (!diceMesh || isInteractiveElement(event.target)) return;
+  if (isInteractiveElement(event.target)) return;
   event.preventDefault();
-  pauseAndReveal("tap");
+  setPointerHeld(true);
 });
+
+document.addEventListener("pointerup", () => setPointerHeld(false));
+document.addEventListener("pointercancel", () => setPointerHeld(false));
 
 // A harder/faster shake spins the die faster: the peak rotation rate seen
 // while accumulating toward the trigger maps to how many full turns it
@@ -779,9 +827,7 @@ function rollDice(peakRotationRate, betaRate, gammaRate) {
   frozen = false;
   settleState = null; // a shake mid-reveal takes priority; don't let it resume stale later
   rolling = true;
-  lastRollTriggerAt = performance.now();
   diceAnswerEl.textContent = "Rolling…";
-  statusIconTapEl.setAttribute("hidden", "");
   statusIconPauseEl.setAttribute("hidden", "");
   escapeRingFillEl.setAttribute("height", "0");
   escapeRingFillEl.setAttribute("y", "100");
@@ -845,18 +891,72 @@ function updateRoll() {
   }
 }
 
-// How the current result was revealed is shown as an icon in the
-// viewfinder (a tap ripple vs. a pause glyph) rather than as text — the
-// icon that isn't the source stays hidden, and both stay hidden when the
-// result came from a shake finishing on its own.
-function finishRoll(index, source) {
+// A shake that happens while NOT held can't roll the die (see
+// handleMotionEvent) — instead it "pulls" the die a short distance toward
+// the shake's direction and springs it back, a felt-but-denied cue with no
+// rotation and no new result. Purely a position offset (diceMesh.position),
+// entirely independent of whatever rotation state (idle spin/frozen/roll)
+// is also active, so it layers on top of it without conflict.
+const PULL_OUT_DURATION_MS = 160;
+const PULL_BACK_DURATION_MS = 320;
+const PULL_DISTANCE_MIN = 0.06;
+const PULL_DISTANCE_MAX = 0.32;
+let pullState = null;
+
+function pullDice(peakRotationRate, betaRate, gammaRate) {
+  if (!diceMesh) return;
+
+  const intensity = peakRotationRate === undefined ? ROTATION_PEAK_FLOOR_DEG_PER_SEC : peakRotationRate;
+  const intensityT = Math.max(
+    0,
+    Math.min(
+      1,
+      (intensity - ROTATION_PEAK_FLOOR_DEG_PER_SEC) / (ROTATION_PEAK_CEILING_DEG_PER_SEC - ROTATION_PEAK_FLOOR_DEG_PER_SEC)
+    )
+  );
+  const distance = PULL_DISTANCE_MIN + intensityT * (PULL_DISTANCE_MAX - PULL_DISTANCE_MIN);
+
+  // Same axis convention as tilt/shake elsewhere: gamma (left/right) ->
+  // screen X, beta (front/back) -> screen Y (inverted, since a positive
+  // beta rate is a forward/downward tilt).
+  let dirX = 0;
+  let dirY = 0;
+  if (betaRate !== undefined && gammaRate !== undefined && (Math.abs(betaRate) > 1e-6 || Math.abs(gammaRate) > 1e-6)) {
+    const len = Math.hypot(betaRate, gammaRate);
+    dirX = gammaRate / len;
+    dirY = -betaRate / len;
+  }
+
+  pullState = { startAt: performance.now(), dirX, dirY, distance };
+}
+
+function updatePull() {
+  if (!pullState) return;
+  const elapsed = performance.now() - pullState.startAt;
+
+  let progress; // 0 (rest) -> 1 (fully pulled) -> 0 (rest)
+  if (elapsed <= PULL_OUT_DURATION_MS) {
+    progress = easeOutCubic(elapsed / PULL_OUT_DURATION_MS);
+  } else if (elapsed <= PULL_OUT_DURATION_MS + PULL_BACK_DURATION_MS) {
+    progress = 1 - easeInOutCubic((elapsed - PULL_OUT_DURATION_MS) / PULL_BACK_DURATION_MS);
+  } else {
+    diceMesh.position.set(0, 0, 0);
+    pullState = null;
+    return;
+  }
+
+  diceMesh.position.set(pullState.dirX * pullState.distance * progress, pullState.dirY * pullState.distance * progress, 0);
+}
+
+// Whether the result was revealed by the phone going still (rather than a
+// held-and-shaken roll) is shown as an icon in the viewfinder — a pause
+// glyph — instead of text.
+function finishRoll(index, revealedByPause) {
   rolling = false;
   diceAnswerEl.textContent = FACES[index].phrase;
 
-  statusIconTapEl.setAttribute("hidden", "");
-  statusIconPauseEl.setAttribute("hidden", "");
-  if (source === "tap") statusIconTapEl.removeAttribute("hidden");
-  else if (source === "pause") statusIconPauseEl.removeAttribute("hidden");
+  if (revealedByPause) statusIconPauseEl.removeAttribute("hidden");
+  else statusIconPauseEl.setAttribute("hidden", "");
 
   if (navigator.vibrate) {
     try {
@@ -877,7 +977,8 @@ function diceFrame(now) {
   lastDiceFrameAt = now;
 
   // The viewfinder frame itself is always visible; only its color cues
-  // whether the die is currently locked on a revealed result.
+  // whether the die is currently frozen showing a revealed result (a
+  // separate concept from the lock icon, which reflects pointerHeld).
   viewfinderEl.classList.toggle("is-frozen", frozen);
 
   if (rollState) {
@@ -889,6 +990,7 @@ function diceFrame(now) {
   } else {
     updateIdleSpin(dt);
   }
+  updatePull();
 
   renderer.render(scene, camera);
 }

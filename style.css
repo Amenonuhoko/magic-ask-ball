@@ -13,8 +13,9 @@
 html, body {
   height: 100%;
   margin: 0;
-  /* The whole screen is the tap-and-hold surface for the die, so suppress
-     scrolling/pinch-zoom/pull-to-refresh and text-selection callouts. */
+  /* The whole screen is the hold surface that arms the die's roll gate, so
+     suppress scrolling/pinch-zoom/pull-to-refresh and text-selection
+     callouts. */
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
@@ -49,6 +50,27 @@ main {
   max-height: 320px;
 }
 
+/* Sits BEHIND the die on purpose (before .dice-canvas in the DOM, same
+   stacking context) so the die's own opaque render occludes it — same
+   inset/viewBox mapping as .dice-canvas so their coordinate spaces line up
+   and the occlusion lands exactly where the die's silhouette actually is. */
+.level-light-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* Fill comes entirely from the radial gradient in index.html (opaque core
+   fading to nothing at the edge) so this stays a soft glow, not a
+   hard-edged shape — sized to roughly the die's own footprint and shifted
+   only a little with tilt, so it's fully hidden behind the die at rest and
+   only ever peeks out past its edges. */
+.level-light {
+  fill: url(#level-light-gradient);
+}
+
 .dice-canvas {
   position: absolute;
   inset: 0;
@@ -57,11 +79,11 @@ main {
 }
 
 /* Camera-viewfinder overlay on top of the die: corner brackets frame the
-   stage, a dim light glowing beneath the die doubles as a level indicator,
-   a very subtle vertical fill shows tilt-since-rest, and small icons
-   (rather than text) show how the current result was revealed. Everything
-   here is information that used to live in separate widgets, now
-   co-located in one glanceable spot. */
+   stage, a very subtle vertical fill shows tilt-since-rest, a lock icon
+   shows whether the die can be rolled right now, and a small icon (rather
+   than text) shows when the current result was revealed by the phone
+   going still. Everything here is information that used to live in
+   separate widgets, now co-located in one glanceable spot. */
 .viewfinder {
   position: absolute;
   inset: -12px;
@@ -78,8 +100,8 @@ main {
   transition: stroke 0.25s ease;
 }
 
-/* Brackets turn gold when a result is locked in (paused, tap or hands-free
-   stillness) — a "focus confirmed" cue instead of a text label. */
+/* Brackets turn gold when a result is revealed by the phone going still —
+   a "focus confirmed" cue instead of a text label. */
 .viewfinder.is-frozen .vf-bracket {
   stroke: rgba(212, 175, 55, 0.65);
 }
@@ -95,11 +117,14 @@ main {
   opacity: 0.1;
 }
 
-/* A dim light glowing in the patch beneath the die, not a dot at center —
-   fill comes entirely from the radial gradient in index.html (opaque core
-   fading to nothing at the edge), so this stays soft rather than hard-edged. */
-.level-light {
-  fill: url(#level-light-gradient);
+.lock-icon {
+  opacity: 0.45;
+}
+
+/* Explicit rather than relying on implicit `[hidden]` support for SVG <g>
+   elements, which isn't consistent across browsers. */
+.lock-icon[hidden] {
+  display: none;
 }
 
 .vf-icon-fill {
@@ -148,7 +173,7 @@ main {
 }
 
 /* Deliberately far from the die, at the very bottom of the screen, so it
-   can't be mistaken for part of the tap-and-hold area. */
+   can't be mistaken for part of the hold area. */
 .recenter-btn {
   position: fixed;
   left: 50%;
