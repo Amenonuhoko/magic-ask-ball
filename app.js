@@ -11,7 +11,7 @@ function setStatus(text) {
   statusEl.textContent = text;
 }
 
-const IDLE_HINT = "Tilt to spin, shake to roll, hold to stop";
+const IDLE_HINT = "Tilt to spin, shake to roll, pause to reveal";
 setStatus("Loading…");
 
 // --- sensor pipeline ---
@@ -65,6 +65,19 @@ let prevAccelZ = 0;
 let hasPrevAccel = false;
 const SHAKE_THRESHOLD = 16; // sum of abs deltas across x/y/z, in m/s^2
 const ROLL_COOLDOWN_MS = 600;
+
+// Auto pause-detection: whenever the phone's own physical motion (not the
+// die's spin state, which is driven by held tilt angle rather than actual
+// movement) stays below a small angular-speed threshold for a sustained
+// stretch, that counts as a "pause" and reveals the current face — the same
+// action a tap performs, just hands-free. Requires genuine movement to have
+// happened first, so it can't fire the instant the page loads.
+const PAUSE_STILL_THRESHOLD_DEG_PER_SEC = 8;
+const PAUSE_DURATION_MS = 350;
+let stillSinceAt = null;
+let hasMovedSincePause = false;
+let prevPauseBeta = 0;
+let prevPauseGamma = 0;
 
 function handleOrientationEvent(event) {
   if (event.beta === null || event.gamma === null) return;
@@ -124,6 +137,28 @@ function recenterTilt() {
 
 recenterBtn.addEventListener("click", recenterTilt);
 
+function updatePauseDetection(now, dt) {
+  const gyroFresh = hasGyro && now - lastGyroAt < GYRO_FRESH_WINDOW_MS;
+  const deviceSpeed = gyroFresh
+    ? Math.hypot(gyroBeta, gyroGamma)
+    : Math.hypot(filteredBeta - prevPauseBeta, filteredGamma - prevPauseGamma) / dt;
+  prevPauseBeta = filteredBeta;
+  prevPauseGamma = filteredGamma;
+
+  if (deviceSpeed > PAUSE_STILL_THRESHOLD_DEG_PER_SEC) {
+    stillSinceAt = null;
+    hasMovedSincePause = true;
+    return;
+  }
+
+  if (stillSinceAt === null) stillSinceAt = now;
+
+  if (hasMovedSincePause && !frozen && diceMesh && now - stillSinceAt > PAUSE_DURATION_MS) {
+    hasMovedSincePause = false;
+    pauseAndReveal();
+  }
+}
+
 function frame(now) {
   requestAnimationFrame(frame);
   if (!hasOrientation) return;
@@ -139,6 +174,8 @@ function frame(now) {
 
   currentDeltaBeta = filteredBeta - tiltZeroBeta;
   currentDeltaGamma = filteredGamma - tiltZeroGamma;
+
+  updatePauseDetection(now, dt);
 }
 
 function startListening() {
@@ -198,19 +235,45 @@ function initOrientation() {
 
 // --- dice (three.js) ---
 
-const OUTCOMES = [
-  { label: "YES", color: 0x34d399 },
-  { label: "NO", color: 0xff5c5c },
-  { label: "MAYBE YES", color: 0xfacc15 },
-  { label: "MAYBE NOT", color: 0xfb923c },
-  { label: "TRY AGAIN", color: 0x8b93a6 },
+const OBSIDIAN_COLOR = "#08080b";
+const GOLD_COLOR = "#d4af37";
+
+// 20 unique phrases (4 per category: yes / no / leaning-yes / leaning-no /
+// inconclusive) — no two faces ever say the same thing.
+const OUTCOME_PHRASES = [
+  // Yes
+  "The stars align in your favor",
+  "Without a doubt",
+  "Fate says yes",
+  "The omens are bright",
+  // No
+  "The shadows say no",
+  "Not a chance",
+  "The spirits decline",
+  "Firmly no",
+  // Maybe yes
+  "Signs point to yes",
+  "Likely, if you're patient",
+  "The odds favor you",
+  "Probably — trust your gut",
+  // Maybe not
+  "Signs point to no",
+  "Doubtful, but not impossible",
+  "The odds are against you",
+  "Probably not — tread carefully",
+  // Try again
+  "The mists are unclear, ask again",
+  "The ball is still thinking",
+  "Shake once more",
+  "Ask again when the moment is right",
 ];
 
-// 20 faces, 4 of each outcome, order shuffled so it's not grouped 5-by-5.
-const FACE_OUTCOME_INDEX = [0, 2, 4, 1, 3, 1, 4, 0, 3, 2, 3, 0, 2, 4, 1, 4, 1, 3, 2, 0];
-const FACES = FACE_OUTCOME_INDEX.map((outcomeIndex, i) => ({
+// Shuffled so faces don't visibly cluster all 4 of one category together.
+const FACE_PHRASE_ORDER = [4, 12, 0, 17, 8, 1, 15, 9, 3, 19, 11, 6, 2, 14, 7, 16, 10, 5, 18, 13];
+
+const FACES = FACE_PHRASE_ORDER.map((phraseIndex, i) => ({
   number: i + 1,
-  ...OUTCOMES[outcomeIndex],
+  phrase: OUTCOME_PHRASES[phraseIndex],
 }));
 
 let renderer = null;
@@ -234,19 +297,15 @@ const SETTLE_DURATION_MS = 450;
 const MAX_SPIN_SPEED = Math.PI * 1.5; // radians/sec at full tilt range
 const IDLE_SPIN_DEADZONE = 0.02; // ignore sub-noise angular velocity
 
-// Tap-and-hold: freezes the die at whatever orientation it's currently in
-// and captures the phone's current tilt as a dedicated "level" reference —
-// independent of the Recenter zero-point used for idle spin. While frozen,
-// tilting away from that captured reference past a threshold breaks the
-// freeze and resumes spinning (still held or not). Releasing always snaps
-// the die onto whichever face is currently nearest the camera, then
-// re-freezes with a fresh reference captured at that moment — so a further
-// tilt past the threshold resumes spinning again from there too.
+// Pausing (tap, or the phone simply going still — see updatePauseDetection)
+// snaps the die onto whichever face is currently nearest the camera and
+// reveals it, then freezes there with a fresh "level" reference. Tilting
+// away from that reference past a threshold resumes spinning.
 let frozen = false;
 let frozenZeroBeta = 0;
 let frozenZeroGamma = 0;
 let settleState = null;
-const HOLD_ESCAPE_THRESHOLD_DEG = 22;
+const HOLD_ESCAPE_THRESHOLD_DEG = 66; // 3x the original 22°
 const RELEASE_SETTLE_DURATION_MS = 300;
 
 function easeOutCubic(t) {
@@ -277,29 +336,85 @@ function computeFaceNormals(geometry) {
   return normals;
 }
 
+// Every face gets the SAME canonical UV triangle, paired with a texture
+// (drawn below) that puts its number in the matching spot — so we don't
+// need a real per-face UV unwrap, just a consistent convention the
+// geometry and the texture both agree on. Winding is uniform across all 20
+// faces (verified separately), so this reads upright on every face.
+function assignPerFaceUVs(geometry) {
+  const uv = geometry.attributes.uv;
+  const corners = [
+    [0, 0],
+    [1, 0],
+    [0.5, 1],
+  ];
+  for (let face = 0; face < 20; face++) {
+    for (let vertex = 0; vertex < 3; vertex++) {
+      const i = face * 3 + vertex;
+      uv.setXY(i, corners[vertex][0], corners[vertex][1]);
+    }
+  }
+  uv.needsUpdate = true;
+}
+
+function makeFaceTexture(number) {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+
+  ctx.fillStyle = OBSIDIAN_COLOR;
+  ctx.fillRect(0, 0, size, size);
+
+  ctx.fillStyle = GOLD_COLOR;
+  ctx.font = "bold 108px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  // Sits near the centroid of the canonical UV triangle above (apex at the
+  // canvas top, base at the bottom), not the canvas's literal center.
+  ctx.fillText(String(number), size / 2, size * 0.66);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  return texture;
+}
+
 function initDiceScene() {
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(45, 1, 0.1, 10);
   camera.position.set(0, 0, 3.2);
 
-  const ambient = new THREE.AmbientLight(0xffffff, 0.6);
-  const key = new THREE.DirectionalLight(0xffffff, 0.8);
+  const ambient = new THREE.AmbientLight(0xffffff, 0.35);
+  const key = new THREE.DirectionalLight(0xffffff, 1.1);
   key.position.set(2, 3, 4);
-  scene.add(ambient, key);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.5);
+  rim.position.set(-3, -1, 2);
+  scene.add(ambient, key, rim);
 
   const geometry = new THREE.IcosahedronGeometry(1, 0);
   geometry.clearGroups();
   for (let i = 0; i < 20; i++) geometry.addGroup(i * 3, 3, i);
   faceNormals = computeFaceNormals(geometry);
+  assignPerFaceUVs(geometry);
 
   const materials = FACES.map(
-    (face) => new THREE.MeshStandardMaterial({ color: face.color, roughness: 0.55, metalness: 0.05 })
+    (face) =>
+      new THREE.MeshPhysicalMaterial({
+        map: makeFaceTexture(face.number),
+        color: 0xffffff, // texture already carries the final colors; no tint
+        roughness: 0.15,
+        metalness: 0.15,
+        clearcoat: 1,
+        clearcoatRoughness: 0.06,
+        reflectivity: 1,
+      })
   );
   diceMesh = new THREE.Mesh(geometry, materials);
 
   const edgeLines = new THREE.LineSegments(
     new THREE.EdgesGeometry(geometry),
-    new THREE.LineBasicMaterial({ color: 0x0b0d12 })
+    new THREE.LineBasicMaterial({ color: 0x000000 })
   );
   diceMesh.add(edgeLines);
 
@@ -349,6 +464,7 @@ function checkFrozenEscape() {
   const deltaGamma = filteredGamma - frozenZeroGamma;
   if (Math.hypot(deltaBeta, deltaGamma) > HOLD_ESCAPE_THRESHOLD_DEG) {
     frozen = false;
+    stillSinceAt = null; // don't let a stale stillness timer instantly re-trigger a pause
   }
 }
 
@@ -367,19 +483,11 @@ function findNearestFaceIndex() {
   return bestIndex;
 }
 
-function freezeDice() {
+// Snaps the die onto whichever face is currently nearest the camera and
+// reveals it. Triggered by a tap or by the phone going physically still
+// (see updatePauseDetection) — either way, "pausing" is what shows a result.
+function pauseAndReveal() {
   if (!diceMesh) return;
-  rollState = null;
-  settleState = null;
-  rolling = false;
-  frozen = true;
-  frozenZeroBeta = filteredBeta;
-  frozenZeroGamma = filteredGamma;
-}
-
-function releaseDice() {
-  if (!diceMesh) return;
-  frozen = false;
   rollState = null;
 
   const nearestIndex = findNearestFaceIndex();
@@ -416,17 +524,17 @@ function updateSettle() {
     const resultIndex = settleState.resultIndex;
     settleState = null;
     finishRoll(resultIndex);
-    // Re-freeze with a fresh reference so a further tilt past the
-    // threshold resumes spinning again from this resting position.
+    // Freeze with a fresh reference so a further tilt past the threshold
+    // resumes spinning again from this resting position.
     frozen = true;
     frozenZeroBeta = filteredBeta;
     frozenZeroGamma = filteredGamma;
   }
 }
 
-// The tap-and-hold surface is the whole screen (not just the die itself),
-// except for actual buttons — clicks on those should behave normally and
-// not also freeze/release the die.
+// The tap surface is the whole screen (not just the die itself), except for
+// actual buttons — clicks on those should behave normally and not also
+// trigger a reveal.
 function isInteractiveElement(target) {
   return target.closest("button, a, input, select, textarea") !== null;
 }
@@ -434,31 +542,15 @@ function isInteractiveElement(target) {
 document.addEventListener("pointerdown", (event) => {
   if (!diceMesh || isInteractiveElement(event.target)) return;
   event.preventDefault();
-  try {
-    document.documentElement.setPointerCapture(event.pointerId);
-  } catch {
-    // ignore — pointer capture is a nicety, not required for correctness
-  }
-  freezeDice();
-});
-
-document.addEventListener("pointerup", (event) => {
-  if (!diceMesh || isInteractiveElement(event.target)) return;
-  releaseDice();
-});
-
-document.addEventListener("pointercancel", (event) => {
-  if (!diceMesh || isInteractiveElement(event.target)) return;
-  releaseDice();
+  pauseAndReveal();
 });
 
 function rollDice() {
   if (rolling || !diceMesh) return;
   frozen = false;
-  settleState = null; // a shake mid-release-settle takes priority; don't let it resume stale later
+  settleState = null; // a shake mid-reveal takes priority; don't let it resume stale later
   rolling = true;
   diceAnswerEl.textContent = "Rolling…";
-  diceAnswerEl.style.color = "";
 
   const resultIndex = Math.floor(Math.random() * 20);
   const cameraDir = new THREE.Vector3(0, 0, 1);
@@ -516,9 +608,7 @@ function updateRoll() {
 function finishRoll(index) {
   rolling = false;
   lastRollAt = performance.now();
-  const face = FACES[index];
-  diceAnswerEl.textContent = face.label;
-  diceAnswerEl.style.color = `#${face.color.toString(16).padStart(6, "0")}`;
+  diceAnswerEl.textContent = FACES[index].phrase;
   if (navigator.vibrate) {
     try {
       navigator.vibrate([30, 40, 30]);
