@@ -52,10 +52,10 @@ main {
   transform: translate(-50%, -50%);
   background: linear-gradient(135deg, var(--accent), #ff5c9d);
   clip-path: circle(50% at 50% 50%);
+  /* left/top (ball position) intentionally NOT transitioned — instant 1:1 tracking */
   transition: clip-path 0.5s cubic-bezier(0.65, 0, 0.35, 1),
     border-radius 0.5s cubic-bezier(0.65, 0, 0.35, 1),
-    width 0.3s ease, height 0.3s ease,
-    left 0.15s linear, top 0.15s linear;
+    width 0.3s ease, height 0.3s ease;
 }
 
 .shape.pulse {
@@ -102,6 +102,48 @@ main {
   padding: 0.75rem 1.5rem;
   font-size: 1rem;
   cursor: pointer;
+}
+
+.calibration {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+}
+
+.calibration-readout {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.range-control {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  opacity: 0.85;
+}
+
+.range-control input[type="range"] {
+  accent-color: #2fc9a0;
+}
+
+.calibrate-btn {
+  background: #2fc9a0;
+  color: #06231b;
+  border: none;
+  border-radius: 999px;
+  padding: 0.6rem 1.1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.calibrate-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .carousel {

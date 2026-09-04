@@ -21,6 +21,16 @@
     </div>
     <p id="status" class="status">Tilt your phone to change the shape</p>
     <button id="enable-motion" class="enable-motion" hidden>Enable orientation</button>
+    <div id="calibration" class="calibration" hidden>
+      <div id="calibration-readout" class="calibration-readout"></div>
+      <label class="range-control">
+        Range <span id="range-value">45°</span>
+        <input id="range-slider" type="range" min="10" max="70" value="45" />
+      </label>
+      <button id="calibrate-btn" class="calibrate-btn" type="button">
+        Calibrate (tap, then tilt to extremes)
+      </button>
+    </div>
   </main>
   <nav id="mode-carousel" class="carousel">
     <button class="mode-btn mode-1" data-mode="info" type="button">Orientation</button>
