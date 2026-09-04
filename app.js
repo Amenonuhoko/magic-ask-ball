@@ -1,35 +1,9 @@
-const SHAPES = [
-  { name: "circle", clipPath: "circle(50% at 50% 50%)" },
-  { name: "square", clipPath: "polygon(0 0, 100% 0, 100% 100%, 0 100%)" },
-  { name: "triangle", clipPath: "polygon(50% 0, 100% 100%, 0 100%)" },
-  { name: "diamond", clipPath: "polygon(50% 0, 100% 50%, 50% 100%, 0 50%)" },
-  {
-    name: "pentagon",
-    clipPath: "polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%)",
-  },
-  {
-    name: "hexagon",
-    clipPath: "polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%)",
-  },
-  {
-    name: "star",
-    clipPath:
-      "polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)",
-  },
-  {
-    name: "arrow",
-    clipPath: "polygon(0 20%, 60% 20%, 60% 0, 100% 50%, 60% 100%, 60% 80%, 0 80%)",
-  },
-];
-
-// Shapes triggered by tilting the phone in a given direction (default mode).
-// "circle" is reserved for holding the phone flat/level.
-const TILT_SHAPES = ["square", "triangle", "diamond", "pentagon", "hexagon", "star", "arrow"];
-const FLAT_SHAPE = "circle";
+// --- DOM refs ---
 
 const stageEl = document.getElementById("stage");
 const shapeEl = document.getElementById("shape");
-const infoTextEl = document.getElementById("info-text");
+const diceCanvasEl = document.getElementById("dice-canvas");
+const diceAnswerEl = document.getElementById("dice-answer");
 const statusEl = document.getElementById("status");
 const enableBtn = document.getElementById("enable-motion");
 const modeButtons = document.querySelectorAll(".mode-btn");
@@ -38,55 +12,39 @@ const calibrationReadoutEl = document.getElementById("calibration-readout");
 const rangeSlider = document.getElementById("range-slider");
 const rangeValueEl = document.getElementById("range-value");
 const calibrateBtn = document.getElementById("calibrate-btn");
-
-const shapesByName = Object.fromEntries(SHAPES.map((s) => [s.name, s]));
-
-let mode = "default"; // "info" | "default" | "ball"
-let currentShapeName = null;
+const recenterBtn = document.getElementById("recenter-btn");
 
 function setStatus(text) {
   statusEl.textContent = text;
 }
 
-// Status/HUD text is throttled independently of position updates below —
-// text doesn't need 60fps, the shape/ball position does.
-let lastStatusAt = 0;
-function throttledStatus(text) {
-  const now = performance.now();
-  if (now - lastStatusAt < 100) return;
-  lastStatusAt = now;
-  setStatus(text);
-}
+// --- modes ---
 
-function applyShape(name) {
-  currentShapeName = name;
-  shapeEl.style.clipPath = shapesByName[name].clipPath;
-  shapeEl.classList.add("pulse");
-  setTimeout(() => shapeEl.classList.remove("pulse"), 200);
-}
+const MODE_HINTS = {
+  calibrate: "Tilt to see live sensor readings",
+  magic: "Shake your phone to roll",
+  ball: "Tilt to roll the ball",
+};
+
+let mode = "magic"; // "calibrate" | "magic" | "ball"
 
 function setMode(nextMode) {
   mode = nextMode;
-  currentShapeName = null;
 
   modeButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === nextMode));
 
-  shapeEl.classList.remove("mode-info", "mode-ball");
-  shapeEl.style.left = "";
-  shapeEl.style.top = "";
-  infoTextEl.hidden = true;
-  calibrationPanel.hidden = nextMode !== "ball";
+  stageEl.hidden = nextMode === "calibrate";
+  shapeEl.hidden = nextMode !== "ball";
+  diceCanvasEl.hidden = nextMode !== "magic";
+  diceAnswerEl.hidden = nextMode !== "magic";
+  calibrationPanel.hidden = nextMode !== "calibrate";
 
-  if (nextMode === "info") {
-    shapeEl.classList.add("mode-info");
-    infoTextEl.hidden = false;
-    infoTextEl.textContent = "Flat";
-  } else if (nextMode === "ball") {
-    shapeEl.classList.add("mode-ball");
-    shapeEl.style.clipPath = shapesByName[FLAT_SHAPE].clipPath;
-    recenterBall();
+  setStatus(MODE_HINTS[nextMode]);
+
+  if (nextMode === "magic") {
+    startDiceRendering();
   } else {
-    shapeEl.style.clipPath = shapesByName[FLAT_SHAPE].clipPath;
+    stopDiceRendering();
   }
 }
 
@@ -104,13 +62,13 @@ modeButtons.forEach((btn) => {
 // continuously pull the result back toward the absolute orientation reading
 // so it can't drift. If no gyro is available we fall back to a tight,
 // frame-rate-independent low-pass filter directly on the raw orientation.
+//
+// devicemotion's accelerationIncludingGravity is used separately (and
+// independently of this filter) to detect a shake gesture for dice rolls.
 
 const GYRO_FUSION_ALPHA = 0.96; // weight on the gyro-predicted value vs. raw orientation
 const GYRO_FRESH_WINDOW_MS = 300; // ignore stale rotationRate if devicemotion stopped firing
 const FALLBACK_TAU = 0.05; // seconds; smoothing time-constant when no gyro is available
-
-const FLAT_THRESHOLD = 15; // degrees of tilt below which we call it "flat"
-const FLAT_HYSTERESIS = 5; // extra margin to avoid flickering at the boundary
 
 let rawBeta = 0;
 let rawGamma = 0;
@@ -125,10 +83,9 @@ let filteredBeta = 0;
 let filteredGamma = 0;
 let filterInitialized = false;
 
-let isFlat = true;
 let lastFrameAt = null;
 
-// Ball mode: calibrated neutral point and sensitivity (degrees of tilt = full travel).
+// Ball/calibration: neutral zero-point and sensitivity (degrees of tilt = full travel).
 let ballZeroBeta = 0;
 let ballZeroGamma = 0;
 let ballRangeDeg = 45;
@@ -138,6 +95,14 @@ let calibrationEndAt = 0;
 let calibrationMaxBeta = 0;
 let calibrationMaxGamma = 0;
 let lastReadoutAt = 0;
+
+// Shake detection for dice rolls.
+let prevAccelX = 0;
+let prevAccelY = 0;
+let prevAccelZ = 0;
+let hasPrevAccel = false;
+const SHAKE_THRESHOLD = 16; // sum of abs deltas across x/y/z, in m/s^2
+const ROLL_COOLDOWN_MS = 600;
 
 function handleOrientationEvent(event) {
   if (event.beta === null || event.gamma === null) return;
@@ -153,11 +118,31 @@ function handleOrientationEvent(event) {
 
 function handleMotionEvent(event) {
   const rate = event.rotationRate;
-  if (!rate || rate.beta === null || rate.gamma === null) return;
-  gyroBeta = rate.beta;
-  gyroGamma = rate.gamma;
-  hasGyro = true;
-  lastGyroAt = performance.now();
+  if (rate && rate.beta !== null && rate.gamma !== null) {
+    gyroBeta = rate.beta;
+    gyroGamma = rate.gamma;
+    hasGyro = true;
+    lastGyroAt = performance.now();
+  }
+
+  const acc = event.accelerationIncludingGravity;
+  if (acc && acc.x !== null) {
+    if (hasPrevAccel) {
+      const delta = Math.abs(acc.x - prevAccelX) + Math.abs(acc.y - prevAccelY) + Math.abs(acc.z - prevAccelZ);
+      if (
+        mode === "magic" &&
+        !rolling &&
+        delta > SHAKE_THRESHOLD &&
+        performance.now() - lastRollAt > ROLL_COOLDOWN_MS
+      ) {
+        rollDice();
+      }
+    }
+    prevAccelX = acc.x;
+    prevAccelY = acc.y;
+    prevAccelZ = acc.z;
+    hasPrevAccel = true;
+  }
 }
 
 function stepFilter(dt) {
@@ -175,67 +160,26 @@ function stepFilter(dt) {
   }
 }
 
-function directionLabel(beta, gamma, magnitude) {
-  if (magnitude < FLAT_THRESHOLD) return "Flat";
-  const parts = [];
-  if (Math.abs(beta) > FLAT_THRESHOLD / 2) {
-    parts.push(beta > 0 ? "Tilted forward" : "Tilted back");
-  }
-  if (Math.abs(gamma) > FLAT_THRESHOLD / 2) {
-    parts.push(gamma > 0 ? "right" : "left");
-  }
-  return parts.join(", ") || "Flat";
-}
-
-function updateDefaultMode() {
-  const name = isFlat
-    ? FLAT_SHAPE
-    : TILT_SHAPES[
-        Math.floor(
-          ((Math.atan2(filteredGamma, filteredBeta) * (180 / Math.PI) + 180) / 360) *
-            TILT_SHAPES.length
-        ) % TILT_SHAPES.length
-      ];
-
-  if (name !== currentShapeName) applyShape(name);
-  throttledStatus(`Shape: ${name} (β${filteredBeta.toFixed(0)}° γ${filteredGamma.toFixed(0)}°)`);
-}
-
-function updateInfoMode(magnitude) {
-  infoTextEl.textContent = directionLabel(filteredBeta, filteredGamma, magnitude);
-  throttledStatus(`Orientation (β${filteredBeta.toFixed(0)}° γ${filteredGamma.toFixed(0)}°)`);
-}
-
 function recenterBall() {
   ballZeroBeta = filteredBeta;
   ballZeroGamma = filteredGamma;
 }
 
-function updateBallMode() {
-  const deltaBeta = filteredBeta - ballZeroBeta;
-  const deltaGamma = filteredGamma - ballZeroGamma;
+function updateCalibrationReadout(deltaBeta, deltaGamma) {
+  const now = performance.now();
+  if (now - lastReadoutAt < 100) return;
+  lastReadoutAt = now;
+  calibrationReadoutEl.textContent =
+    `raw β${rawBeta.toFixed(0)}° γ${rawGamma.toFixed(0)}°\n` +
+    `filtered β${filteredBeta.toFixed(0)}° γ${filteredGamma.toFixed(0)}°\n` +
+    `Δβ${deltaBeta.toFixed(0)}° Δγ${deltaGamma.toFixed(0)}°  range ${ballRangeDeg}°`;
+}
 
-  if (calibrating) {
-    calibrationMaxBeta = Math.max(calibrationMaxBeta, Math.abs(deltaBeta));
-    calibrationMaxGamma = Math.max(calibrationMaxGamma, Math.abs(deltaGamma));
-    if (performance.now() > calibrationEndAt) finishCalibration();
-  }
-
+function updateBallMode(deltaBeta, deltaGamma) {
   const clampedGamma = Math.max(-ballRangeDeg, Math.min(ballRangeDeg, deltaGamma));
   const clampedBeta = Math.max(-ballRangeDeg, Math.min(ballRangeDeg, deltaBeta));
   shapeEl.style.left = `${50 + (clampedGamma / ballRangeDeg) * 40}%`;
   shapeEl.style.top = `${50 + (clampedBeta / ballRangeDeg) * 40}%`;
-
-  throttledStatus("Ball rolling");
-
-  const now = performance.now();
-  if (now - lastReadoutAt >= 100) {
-    lastReadoutAt = now;
-    calibrationReadoutEl.textContent =
-      `raw β${rawBeta.toFixed(0)}° γ${rawGamma.toFixed(0)}°  ` +
-      `filtered β${filteredBeta.toFixed(0)}° γ${filteredGamma.toFixed(0)}°  ` +
-      `Δβ${deltaBeta.toFixed(0)}° Δγ${deltaGamma.toFixed(0)}°  range ${ballRangeDeg}°`;
-  }
 }
 
 function startCalibration() {
@@ -251,7 +195,7 @@ function startCalibration() {
 function finishCalibration() {
   calibrating = false;
   calibrateBtn.disabled = false;
-  calibrateBtn.textContent = "Calibrate (tap, then tilt to extremes)";
+  calibrateBtn.textContent = "Calibrate range (tilt to extremes)";
   const measured = Math.round(Math.max(calibrationMaxBeta, calibrationMaxGamma, 10));
   ballRangeDeg = Math.min(measured, Number(rangeSlider.max));
   rangeSlider.value = String(ballRangeDeg);
@@ -259,14 +203,11 @@ function finishCalibration() {
 }
 
 calibrateBtn.addEventListener("click", startCalibration);
+recenterBtn.addEventListener("click", recenterBall);
 
 rangeSlider.addEventListener("input", () => {
   ballRangeDeg = Number(rangeSlider.value);
   rangeValueEl.textContent = `${ballRangeDeg}°`;
-});
-
-stageEl.addEventListener("click", () => {
-  if (mode === "ball" && !calibrating) recenterBall();
 });
 
 function frame(now) {
@@ -282,19 +223,19 @@ function frame(now) {
 
   stepFilter(dt);
 
-  const magnitude = Math.hypot(filteredBeta, filteredGamma);
-  if (isFlat) {
-    if (magnitude > FLAT_THRESHOLD + FLAT_HYSTERESIS) isFlat = false;
-  } else if (magnitude < FLAT_THRESHOLD - FLAT_HYSTERESIS) {
-    isFlat = true;
+  const deltaBeta = filteredBeta - ballZeroBeta;
+  const deltaGamma = filteredGamma - ballZeroGamma;
+
+  if (calibrating) {
+    calibrationMaxBeta = Math.max(calibrationMaxBeta, Math.abs(deltaBeta));
+    calibrationMaxGamma = Math.max(calibrationMaxGamma, Math.abs(deltaGamma));
+    if (now > calibrationEndAt) finishCalibration();
   }
 
-  if (mode === "info") {
-    updateInfoMode(magnitude);
+  if (mode === "calibrate") {
+    updateCalibrationReadout(deltaBeta, deltaGamma);
   } else if (mode === "ball") {
-    updateBallMode();
-  } else {
-    updateDefaultMode();
+    updateBallMode(deltaBeta, deltaGamma);
   }
 }
 
@@ -302,7 +243,6 @@ function startListening() {
   window.addEventListener("deviceorientation", handleOrientationEvent);
   window.addEventListener("devicemotion", handleMotionEvent);
   requestAnimationFrame(frame);
-  setStatus("Listening for tilt…");
 }
 
 async function requestSensorPermissions() {
@@ -330,22 +270,22 @@ async function requestSensorPermissions() {
 
 function initOrientation() {
   if (typeof DeviceOrientationEvent === "undefined") {
-    setStatus("This device doesn't support orientation detection.");
+    setStatus("This device doesn't support motion/orientation sensors.");
     return;
   }
 
   // iOS 13+ requires an explicit user gesture to grant sensor access.
   if (typeof DeviceOrientationEvent.requestPermission === "function") {
     enableBtn.hidden = false;
-    setStatus("Tap the button to enable orientation detection");
+    setStatus("Tap the button to enable sensors");
     enableBtn.addEventListener("click", async () => {
       const { orientationOk, motionOk } = await requestSensorPermissions();
       if (orientationOk) {
         enableBtn.hidden = true;
         startListening();
-        if (!motionOk) setStatus("Gyro permission denied — using smoothing fallback.");
+        setStatus(motionOk ? MODE_HINTS[mode] : "Gyro/shake permission denied — tilt features only.");
       } else {
-        setStatus("Orientation permission denied.");
+        setStatus("Sensor permission denied.");
       }
     });
   } else {
@@ -353,7 +293,209 @@ function initOrientation() {
   }
 }
 
-setMode("default");
+// --- dice (three.js) ---
+
+const OUTCOMES = [
+  { label: "YES", color: 0x34d399 },
+  { label: "NO", color: 0xff5c5c },
+  { label: "MAYBE YES", color: 0xfacc15 },
+  { label: "MAYBE NOT", color: 0xfb923c },
+  { label: "TRY AGAIN", color: 0x8b93a6 },
+];
+
+// 20 faces, 4 of each outcome, order shuffled so it's not grouped 5-by-5.
+const FACE_OUTCOME_INDEX = [0, 2, 4, 1, 3, 1, 4, 0, 3, 2, 3, 0, 2, 4, 1, 4, 1, 3, 2, 0];
+const FACES = FACE_OUTCOME_INDEX.map((outcomeIndex, i) => ({
+  number: i + 1,
+  ...OUTCOMES[outcomeIndex],
+}));
+
+let renderer = null;
+let scene = null;
+let camera = null;
+let diceMesh = null;
+let faceNormals = null;
+let diceRafId = null;
+
+let rolling = false;
+let lastRollAt = 0;
+let rollState = null;
+
+const SPIN_DURATION_MS = 900;
+const SETTLE_DURATION_MS = 450;
+
+function easeOutCubic(t) {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function computeFaceNormals(geometry) {
+  const pos = geometry.attributes.position;
+  const normals = [];
+  const vA = new THREE.Vector3();
+  const vB = new THREE.Vector3();
+  const vC = new THREE.Vector3();
+  const cb = new THREE.Vector3();
+  const ab = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i += 3) {
+    vA.fromBufferAttribute(pos, i);
+    vB.fromBufferAttribute(pos, i + 1);
+    vC.fromBufferAttribute(pos, i + 2);
+    cb.subVectors(vC, vB);
+    ab.subVectors(vA, vB);
+    cb.cross(ab).normalize();
+    normals.push(cb.clone());
+  }
+  return normals;
+}
+
+function initDiceScene() {
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(45, 1, 0.1, 10);
+  camera.position.set(0, 0, 3.2);
+
+  const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+  const key = new THREE.DirectionalLight(0xffffff, 0.8);
+  key.position.set(2, 3, 4);
+  scene.add(ambient, key);
+
+  const geometry = new THREE.IcosahedronGeometry(1, 0);
+  geometry.clearGroups();
+  for (let i = 0; i < 20; i++) geometry.addGroup(i * 3, 3, i);
+  faceNormals = computeFaceNormals(geometry);
+
+  const materials = FACES.map(
+    (face) => new THREE.MeshStandardMaterial({ color: face.color, roughness: 0.55, metalness: 0.05 })
+  );
+  diceMesh = new THREE.Mesh(geometry, materials);
+
+  const edgeLines = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geometry),
+    new THREE.LineBasicMaterial({ color: 0x0b0d12 })
+  );
+  diceMesh.add(edgeLines);
+
+  scene.add(diceMesh);
+
+  renderer = new THREE.WebGLRenderer({ canvas: diceCanvasEl, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  resizeDiceRenderer();
+}
+
+function resizeDiceRenderer() {
+  if (!renderer) return;
+  const rect = stageEl.getBoundingClientRect();
+  const size = Math.max(1, Math.min(rect.width, rect.height));
+  renderer.setSize(size, size, false);
+  camera.aspect = 1;
+  camera.updateProjectionMatrix();
+}
+
+window.addEventListener("resize", resizeDiceRenderer);
+
+function rollDice() {
+  if (rolling) return;
+  rolling = true;
+  diceAnswerEl.textContent = "Rolling…";
+  diceAnswerEl.style.color = "";
+
+  const resultIndex = Math.floor(Math.random() * 20);
+  const cameraDir = new THREE.Vector3(0, 0, 1);
+  const targetNormal = faceNormals[resultIndex].clone().normalize();
+  const settleQuat = new THREE.Quaternion().setFromUnitVectors(targetNormal, cameraDir);
+  const spinAroundCam = new THREE.Quaternion().setFromAxisAngle(cameraDir, Math.random() * Math.PI * 2);
+  const finalQuat = spinAroundCam.multiply(settleQuat);
+
+  const spinAxis = new THREE.Vector3(
+    Math.random() - 0.5,
+    Math.random() - 0.5,
+    Math.random() - 0.5
+  ).normalize();
+
+  rollState = {
+    phase: "spin",
+    startAt: performance.now(),
+    spinAxis,
+    spinStartQuat: diceMesh.quaternion.clone(),
+    resultIndex,
+    finalQuat,
+  };
+}
+
+function updateRoll() {
+  if (!rollState) return;
+  const now = performance.now();
+
+  if (rollState.phase === "spin") {
+    const t = Math.min((now - rollState.startAt) / SPIN_DURATION_MS, 1);
+    const eased = easeOutCubic(t);
+    const totalTurns = 3.5;
+    const angle = eased * totalTurns * Math.PI * 2;
+    const q = new THREE.Quaternion().setFromAxisAngle(rollState.spinAxis, angle);
+    diceMesh.quaternion.copy(rollState.spinStartQuat).premultiply(q);
+
+    if (t >= 1) {
+      rollState.phase = "settle";
+      rollState.settleStartAt = now;
+      rollState.settleFromQuat = diceMesh.quaternion.clone();
+    }
+    return;
+  }
+
+  const t = Math.min((now - rollState.settleStartAt) / SETTLE_DURATION_MS, 1);
+  const eased = easeInOutCubic(t);
+  diceMesh.quaternion.copy(rollState.settleFromQuat).slerp(rollState.finalQuat, eased);
+
+  if (t >= 1) {
+    finishRoll(rollState.resultIndex);
+    rollState = null;
+  }
+}
+
+function finishRoll(index) {
+  rolling = false;
+  lastRollAt = performance.now();
+  const face = FACES[index];
+  diceAnswerEl.textContent = face.label;
+  diceAnswerEl.style.color = `#${face.color.toString(16).padStart(6, "0")}`;
+  if (navigator.vibrate) {
+    try {
+      navigator.vibrate([30, 40, 30]);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function diceFrame() {
+  diceRafId = requestAnimationFrame(diceFrame);
+  updateRoll();
+  renderer.render(scene, camera);
+}
+
+function startDiceRendering() {
+  if (typeof THREE === "undefined") {
+    setStatus("Couldn't load the 3D dice library.");
+    return;
+  }
+  if (!renderer) initDiceScene();
+  resizeDiceRenderer();
+  if (diceRafId === null) diceRafId = requestAnimationFrame(diceFrame);
+}
+
+function stopDiceRendering() {
+  if (diceRafId !== null) {
+    cancelAnimationFrame(diceRafId);
+    diceRafId = null;
+  }
+}
+
+// --- boot ---
+
+setMode("magic");
 initOrientation();
 
 if ("serviceWorker" in navigator) {
