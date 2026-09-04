@@ -28,9 +28,14 @@
     </div>
     <div id="stage" class="stage">
       <svg id="escape-ring" class="escape-ring" viewBox="0 0 100 100" hidden>
-        <circle cx="50" cy="50" r="47" class="escape-ring-track" pathLength="100" />
-        <circle id="escape-ring-progress" cx="50" cy="50" r="47" class="escape-ring-progress"
-          pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" />
+        <defs>
+          <clipPath id="escape-fill-clip">
+            <circle cx="50" cy="50" r="47" />
+          </clipPath>
+        </defs>
+        <circle cx="50" cy="50" r="47" class="escape-ring-track" />
+        <rect id="escape-ring-fill" class="escape-ring-fill" x="0" y="100" width="100" height="0"
+          clip-path="url(#escape-fill-clip)" />
       </svg>
       <canvas id="dice-canvas" class="dice-canvas"></canvas>
     </div>

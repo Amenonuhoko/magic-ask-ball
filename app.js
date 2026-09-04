@@ -9,7 +9,7 @@ const enableBtn = document.getElementById("enable-motion");
 const recenterBtn = document.getElementById("recenter-btn");
 const levelDotEl = document.getElementById("level-dot");
 const escapeRingEl = document.getElementById("escape-ring");
-const escapeRingProgressEl = document.getElementById("escape-ring-progress");
+const escapeRingFillEl = document.getElementById("escape-ring-fill");
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -53,22 +53,28 @@ let lastFrameAt = null;
 
 // Neutral zero-point and sensitivity (degrees of tilt = full spin speed),
 // used by the die's idle spin. Recenter sets the zero-point to whatever
-// tilt the phone is currently at.
+// tilt the phone is currently at. Tightened from 45° so full spin speed is
+// reached with a smaller, more responsive tilt.
 let tiltZeroBeta = 0;
 let tiltZeroGamma = 0;
-const TILT_RANGE_DEG = 45;
+const TILT_RANGE_DEG = 30;
 
 // Current tilt delta (from zero), refreshed every sensor frame.
 let currentDeltaBeta = 0;
 let currentDeltaGamma = 0;
 
-// Shake detection for dice rolls.
+// Shake detection for dice rolls. A shake redirects the die instantly —
+// see rollDice() — so the cooldown here only needs to be long enough to
+// stop a single continuous shake motion from retriggering many times a
+// second (devicemotion fires ~60Hz), not to block deliberate follow-up
+// shakes in a new direction.
 let prevAccelX = 0;
 let prevAccelY = 0;
 let prevAccelZ = 0;
 let hasPrevAccel = false;
 const SHAKE_THRESHOLD = 16; // sum of abs deltas across x/y/z, in m/s^2
-const ROLL_COOLDOWN_MS = 600;
+const SHAKE_RETRIGGER_COOLDOWN_MS = 150;
+let lastRollTriggerAt = 0;
 
 // Auto pause-detection: whenever the phone's own physical motion (not the
 // die's spin state, which is driven by held tilt angle rather than actual
@@ -76,7 +82,7 @@ const ROLL_COOLDOWN_MS = 600;
 // stretch, that counts as a "pause" and reveals the current face — the same
 // action a tap performs, just hands-free. Requires genuine movement to have
 // happened first, so it can't fire the instant the page loads.
-const PAUSE_STILL_THRESHOLD_DEG_PER_SEC = 8;
+const PAUSE_STILL_THRESHOLD_DEG_PER_SEC = 5; // tightened from 8 — small real movements now correctly count as "moving"
 const PAUSE_DURATION_MS = 350;
 let stillSinceAt = null;
 let hasMovedSincePause = false;
@@ -107,9 +113,14 @@ function handleMotionEvent(event) {
   const acc = event.accelerationIncludingGravity;
   if (acc && acc.x !== null) {
     if (hasPrevAccel) {
-      const delta = Math.abs(acc.x - prevAccelX) + Math.abs(acc.y - prevAccelY) + Math.abs(acc.z - prevAccelZ);
-      if (!rolling && delta > SHAKE_THRESHOLD && performance.now() - lastRollAt > ROLL_COOLDOWN_MS) {
-        rollDice(delta);
+      const dx = acc.x - prevAccelX;
+      const dy = acc.y - prevAccelY;
+      const dz = acc.z - prevAccelZ;
+      const delta = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
+      // No `!rolling` guard: a shake can interrupt and redirect a roll
+      // already in progress, not just start a fresh one.
+      if (delta > SHAKE_THRESHOLD && performance.now() - lastRollTriggerAt > SHAKE_RETRIGGER_COOLDOWN_MS) {
+        rollDice(delta, dx, dy);
       }
     }
     prevAccelX = acc.x;
@@ -141,14 +152,16 @@ function recenterTilt() {
 
 recenterBtn.addEventListener("click", recenterTilt);
 
-// Bubble-level style indicator showing the phone's absolute tilt away from
-// physically flat (beta=gamma=0) — independent of Recenter's zero-point.
-const LEVEL_DISPLAY_RANGE_DEG = 45; // tilt at which the dot reaches the ring edge
+// Bubble-level style indicator. Centered on frozenZeroBeta/Gamma — the same
+// "level" reference the escape-threshold ring uses — so pausing (tap or
+// auto pause-detection) recalibrates the dot right back to center, and its
+// edge lines up exactly with the ring's escape threshold. Before the first
+// pause it's centered on physically flat (frozenZero starts at 0,0).
 const LEVEL_DOT_RADIUS = 38; // in the 0-100 SVG viewBox
 
 function updateLevelIndicator() {
-  const nx = Math.max(-1, Math.min(1, filteredGamma / LEVEL_DISPLAY_RANGE_DEG));
-  const ny = Math.max(-1, Math.min(1, filteredBeta / LEVEL_DISPLAY_RANGE_DEG));
+  const nx = Math.max(-1, Math.min(1, (filteredGamma - frozenZeroGamma) / HOLD_ESCAPE_THRESHOLD_DEG));
+  const ny = Math.max(-1, Math.min(1, (filteredBeta - frozenZeroBeta) / HOLD_ESCAPE_THRESHOLD_DEG));
   levelDotEl.setAttribute("cx", String(50 + nx * LEVEL_DOT_RADIUS));
   levelDotEl.setAttribute("cy", String(50 + ny * LEVEL_DOT_RADIUS));
 }
@@ -301,7 +314,6 @@ let faceNormals = null;
 let diceRafId = null;
 
 let rolling = false;
-let lastRollAt = 0;
 let rollState = null;
 let lastDiceFrameAt = null;
 
@@ -312,7 +324,7 @@ const SETTLE_DURATION_MS = 450;
 // angular velocity instead of position — tilting "rolls" the die the same
 // direction a rolling ball would move.
 const MAX_SPIN_SPEED = Math.PI * 1.5; // radians/sec at full tilt range
-const IDLE_SPIN_DEADZONE = 0.02; // ignore sub-noise angular velocity
+const IDLE_SPIN_DEADZONE = 0.01; // ignore sub-noise angular velocity (tightened from 0.02)
 
 // Pausing (tap, or the phone simply going still — see updatePauseDetection)
 // snaps the die onto whichever face is currently nearest the camera and
@@ -480,9 +492,12 @@ function checkFrozenEscape() {
   const deltaBeta = filteredBeta - frozenZeroBeta;
   const deltaGamma = filteredGamma - frozenZeroGamma;
   const progress = Math.min(Math.hypot(deltaBeta, deltaGamma) / HOLD_ESCAPE_THRESHOLD_DEG, 1);
-  // pathLength="100" on the SVG circles means dasharray/dashoffset are
-  // already in percent, so no circumference math needed here.
-  escapeRingProgressEl.style.strokeDashoffset = String(100 * (1 - progress));
+
+  // Fills vertically (bottom to top) rather than sweeping around the
+  // circumference: a rect clipped to the circle grows from the bottom.
+  const fillHeight = progress * 100;
+  escapeRingFillEl.setAttribute("height", String(fillHeight));
+  escapeRingFillEl.setAttribute("y", String(100 - fillHeight));
 
   if (progress >= 1) {
     frozen = false;
@@ -511,6 +526,15 @@ function findNearestFaceIndex() {
 function pauseAndReveal(source) {
   if (!diceMesh) return;
   rollState = null;
+
+  // Recalibrate the "level" reference right now, not after the settle
+  // animation finishes — the moment you pause is what defines the new
+  // resting center, so the level dot and escape-threshold fill both reset
+  // instantly rather than lagging ~300ms behind the tap.
+  frozenZeroBeta = filteredBeta;
+  frozenZeroGamma = filteredGamma;
+  escapeRingFillEl.setAttribute("height", "0");
+  escapeRingFillEl.setAttribute("y", "100");
 
   const nearestIndex = findNearestFaceIndex();
   const cameraDir = new THREE.Vector3(0, 0, 1);
@@ -548,12 +572,10 @@ function updateSettle() {
     const source = settleState.source;
     settleState = null;
     finishRoll(resultIndex, source);
-    // Freeze with a fresh reference so a further tilt past the threshold
-    // resumes spinning again from this resting position.
+    // The level/escape-threshold reference was already recalibrated back in
+    // pauseAndReveal(); just start the "resting" state now that the visual
+    // settle has actually finished.
     frozen = true;
-    frozenZeroBeta = filteredBeta;
-    frozenZeroGamma = filteredGamma;
-    escapeRingProgressEl.style.strokeDashoffset = "100";
   }
 }
 
@@ -578,11 +600,26 @@ const SHAKE_MIN_TURNS = 2;
 const SHAKE_MAX_TURNS = 6;
 const SHAKE_INTENSITY_CEILING = 60; // delta magnitude at/above which turns cap out at SHAKE_MAX_TURNS
 
-function rollDice(shakeIntensity) {
-  if (rolling || !diceMesh) return;
+// A shake's direction, not just its magnitude, drives the die: shaking
+// left kills whatever spin is already happening and starts a fresh spin
+// leftward instantly (no blending old momentum into new — the animation
+// always restarts from the die's CURRENT visual orientation), shaking
+// right does the same in reverse. Uses the same axis convention as tilt's
+// idle spin: a horizontal (x) shake spins around the vertical axis, a
+// vertical (y) shake around the horizontal axis.
+function directionalSpinAxis(dx, dy) {
+  if (dx === undefined || dy === undefined || (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6)) {
+    return new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+  }
+  return new THREE.Vector3(dy, -dx, 0).normalize();
+}
+
+function rollDice(shakeIntensity, dx, dy) {
+  if (!diceMesh) return;
   frozen = false;
   settleState = null; // a shake mid-reveal takes priority; don't let it resume stale later
   rolling = true;
+  lastRollTriggerAt = performance.now();
   diceAnswerEl.textContent = "Rolling…";
   stopIndicatorEl.hidden = true;
 
@@ -600,16 +637,12 @@ function rollDice(shakeIntensity) {
   const spinAroundCam = new THREE.Quaternion().setFromAxisAngle(cameraDir, Math.random() * Math.PI * 2);
   const finalQuat = spinAroundCam.multiply(settleQuat);
 
-  const spinAxis = new THREE.Vector3(
-    Math.random() - 0.5,
-    Math.random() - 0.5,
-    Math.random() - 0.5
-  ).normalize();
-
   rollState = {
     phase: "spin",
     startAt: performance.now(),
-    spinAxis,
+    spinAxis: directionalSpinAxis(dx, dy),
+    // Current orientation, NOT the previous rollState's spinStartQuat —
+    // this is what makes a redirect instant rather than blended.
     spinStartQuat: diceMesh.quaternion.clone(),
     resultIndex,
     finalQuat,
@@ -653,7 +686,6 @@ const STOP_INDICATOR_TEXT = {
 
 function finishRoll(index, source) {
   rolling = false;
-  lastRollAt = performance.now();
   diceAnswerEl.textContent = FACES[index].phrase;
 
   const indicatorText = STOP_INDICATOR_TEXT[source];
