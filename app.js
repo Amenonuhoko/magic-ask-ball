@@ -267,7 +267,13 @@ function updatePauseDetection(now, dt) {
 
   if (stillSinceAt === null) stillSinceAt = now;
 
-  if (hasMovedSincePause && !frozen && diceMesh && now - stillSinceAt > PAUSE_DURATION_MS) {
+  // !rolling && !settleState: a shake-triggered roll (or its own settle) is
+  // already an active, deliberate action — the phone naturally goes still
+  // right after the shake that started it, well within PAUSE_DURATION_MS of
+  // the ~1.35s roll+settle animation, so without this guard auto-pause
+  // detection would hijack it mid-flight and substitute whatever face
+  // happens to be facing the camera at that instant for the real result.
+  if (hasMovedSincePause && !frozen && !rolling && !settleState && diceMesh && now - stillSinceAt > PAUSE_DURATION_MS) {
     hasMovedSincePause = false;
     pauseAndReveal();
   }
@@ -650,6 +656,14 @@ function resizeDiceRenderer() {
 
 window.addEventListener("resize", resizeDiceRenderer);
 
+// Fixed axes + scratch quaternions, reused every frame instead of
+// allocating fresh THREE objects on this hot 60fps path (idle spin runs
+// continuously whenever the die isn't rolling/settling).
+const IDLE_SPIN_AXIS_Y = new THREE.Vector3(0, 1, 0);
+const IDLE_SPIN_AXIS_X = new THREE.Vector3(1, 0, 0);
+const idleSpinScratchQuatY = new THREE.Quaternion();
+const idleSpinScratchQuatX = new THREE.Quaternion();
+
 function updateIdleSpin(dt) {
   if (rolling || !diceMesh) return;
 
@@ -663,8 +677,8 @@ function updateIdleSpin(dt) {
 
   if (Math.abs(angVelX) < IDLE_SPIN_DEADZONE && Math.abs(angVelY) < IDLE_SPIN_DEADZONE) return;
 
-  const qY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angVelY * dt);
-  const qX = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), angVelX * dt);
+  const qY = idleSpinScratchQuatY.setFromAxisAngle(IDLE_SPIN_AXIS_Y, angVelY * dt);
+  const qX = idleSpinScratchQuatX.setFromAxisAngle(IDLE_SPIN_AXIS_X, angVelX * dt);
   // Compose in world space (premultiply) so "tilt right" always spins the
   // same screen-space direction regardless of the die's current orientation.
   diceMesh.quaternion.premultiply(qY).premultiply(qX);
@@ -804,6 +818,17 @@ const SHAKE_MAX_TURNS = 6;
 const ROTATION_PEAK_FLOOR_DEG_PER_SEC = 80; // peak rate at/below which turns bottom out at SHAKE_MIN_TURNS
 const ROTATION_PEAK_CEILING_DEG_PER_SEC = 500; // peak rate at/above which turns cap out at SHAKE_MAX_TURNS
 
+// Shared by rollDice() (turns) and pullDice() (distance): normalizes a peak
+// rotation rate to 0..1 against the same floor/ceiling, clamped at both
+// ends, so both scale off one intensity curve instead of two copies of it.
+function intensityFromPeakRate(peakRotationRate) {
+  const rate = peakRotationRate === undefined ? ROTATION_PEAK_FLOOR_DEG_PER_SEC : peakRotationRate;
+  return Math.max(
+    0,
+    Math.min(1, (rate - ROTATION_PEAK_FLOOR_DEG_PER_SEC) / (ROTATION_PEAK_CEILING_DEG_PER_SEC - ROTATION_PEAK_FLOOR_DEG_PER_SEC))
+  );
+}
+
 // A shake's direction, not just its magnitude, drives the die: shaking
 // left kills whatever spin is already happening and starts a fresh spin
 // leftward instantly (no blending old momentum into new — the animation
@@ -832,14 +857,7 @@ function rollDice(peakRotationRate, betaRate, gammaRate) {
   escapeRingFillEl.setAttribute("height", "0");
   escapeRingFillEl.setAttribute("y", "100");
 
-  const intensity = peakRotationRate === undefined ? ROTATION_PEAK_FLOOR_DEG_PER_SEC : peakRotationRate;
-  const intensityT = Math.max(
-    0,
-    Math.min(
-      1,
-      (intensity - ROTATION_PEAK_FLOOR_DEG_PER_SEC) / (ROTATION_PEAK_CEILING_DEG_PER_SEC - ROTATION_PEAK_FLOOR_DEG_PER_SEC)
-    )
-  );
+  const intensityT = intensityFromPeakRate(peakRotationRate);
   const totalTurns = SHAKE_MIN_TURNS + intensityT * (SHAKE_MAX_TURNS - SHAKE_MIN_TURNS);
 
   const resultIndex = Math.floor(Math.random() * 20);
@@ -888,6 +906,16 @@ function updateRoll() {
   if (t >= 1) {
     finishRoll(rollState.resultIndex);
     rollState = null;
+    // Freeze on the revealed face, same as pauseAndReveal() does — without
+    // this, the die had no `frozen` transition at all after a completed
+    // roll, so it would immediately resume tilt-driven idle spin off of
+    // whatever tilt the phone happened to be at. Recalibrate the "level"
+    // reference now too, for the same reason pauseAndReveal() does: so the
+    // resting-tilt fill and level light both start from zero instead of
+    // measuring drift from a stale, possibly long-past reference.
+    frozen = true;
+    frozenZeroBeta = filteredBeta;
+    frozenZeroGamma = filteredGamma;
   }
 }
 
@@ -906,14 +934,7 @@ let pullState = null;
 function pullDice(peakRotationRate, betaRate, gammaRate) {
   if (!diceMesh) return;
 
-  const intensity = peakRotationRate === undefined ? ROTATION_PEAK_FLOOR_DEG_PER_SEC : peakRotationRate;
-  const intensityT = Math.max(
-    0,
-    Math.min(
-      1,
-      (intensity - ROTATION_PEAK_FLOOR_DEG_PER_SEC) / (ROTATION_PEAK_CEILING_DEG_PER_SEC - ROTATION_PEAK_FLOOR_DEG_PER_SEC)
-    )
-  );
+  const intensityT = intensityFromPeakRate(peakRotationRate);
   const distance = PULL_DISTANCE_MIN + intensityT * (PULL_DISTANCE_MAX - PULL_DISTANCE_MIN);
 
   // Same axis convention as tilt/shake elsewhere: gamma (left/right) ->
