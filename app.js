@@ -153,15 +153,14 @@ function recenterTilt() {
 recenterBtn.addEventListener("click", recenterTilt);
 
 // Bubble-level style indicator. Centered on frozenZeroBeta/Gamma — the same
-// "level" reference the escape-threshold ring uses — so pausing (tap or
-// auto pause-detection) recalibrates the dot right back to center, and its
-// edge lines up exactly with the ring's escape threshold. Before the first
-// pause it's centered on physically flat (frozenZero starts at 0,0).
+// "level" reference the resting-tilt fill uses — so pausing (tap or auto
+// pause-detection) recalibrates the dot right back to center. Before the
+// first pause it's centered on physically flat (frozenZero starts at 0,0).
 const LEVEL_DOT_RADIUS = 38; // in the 0-100 SVG viewBox
 
 function updateLevelIndicator() {
-  const nx = Math.max(-1, Math.min(1, (filteredGamma - frozenZeroGamma) / HOLD_ESCAPE_THRESHOLD_DEG));
-  const ny = Math.max(-1, Math.min(1, (filteredBeta - frozenZeroBeta) / HOLD_ESCAPE_THRESHOLD_DEG));
+  const nx = Math.max(-1, Math.min(1, (filteredGamma - frozenZeroGamma) / TILT_VISUAL_RANGE_DEG));
+  const ny = Math.max(-1, Math.min(1, (filteredBeta - frozenZeroBeta) / TILT_VISUAL_RANGE_DEG));
   levelDotEl.setAttribute("cx", String(50 + nx * LEVEL_DOT_RADIUS));
   levelDotEl.setAttribute("cy", String(50 + ny * LEVEL_DOT_RADIUS));
 }
@@ -328,13 +327,15 @@ const IDLE_SPIN_DEADZONE = 0.01; // ignore sub-noise angular velocity (tightened
 
 // Pausing (tap, or the phone simply going still — see updatePauseDetection)
 // snaps the die onto whichever face is currently nearest the camera and
-// reveals it, then freezes there with a fresh "level" reference. Tilting
-// away from that reference past a threshold resumes spinning.
+// reveals it, then freezes there with a fresh "level" reference. There's no
+// tilt threshold that resumes spinning on its own — once it's stopped, it
+// stays stopped until you tap again or shake. TILT_VISUAL_RANGE_DEG is only
+// a display scale for the resting-tilt fill/level dot now, not a trigger.
 let frozen = false;
 let frozenZeroBeta = 0;
 let frozenZeroGamma = 0;
 let settleState = null;
-const HOLD_ESCAPE_THRESHOLD_DEG = 66; // 3x the original 22°
+const TILT_VISUAL_RANGE_DEG = 66;
 const RELEASE_SETTLE_DURATION_MS = 300;
 
 function easeOutCubic(t) {
@@ -488,21 +489,19 @@ function updateIdleSpin(dt) {
   diceMesh.quaternion.normalize();
 }
 
-function checkFrozenEscape() {
+// Purely a visual readout of how far you've tilted since the die came to
+// rest — no threshold, tilting never resumes spinning on its own anymore.
+// Only a tap or a shake does that.
+function updateFrozenFill() {
   const deltaBeta = filteredBeta - frozenZeroBeta;
   const deltaGamma = filteredGamma - frozenZeroGamma;
-  const progress = Math.min(Math.hypot(deltaBeta, deltaGamma) / HOLD_ESCAPE_THRESHOLD_DEG, 1);
+  const progress = Math.min(Math.hypot(deltaBeta, deltaGamma) / TILT_VISUAL_RANGE_DEG, 1);
 
   // Fills vertically (bottom to top) rather than sweeping around the
   // circumference: a rect clipped to the circle grows from the bottom.
   const fillHeight = progress * 100;
   escapeRingFillEl.setAttribute("height", String(fillHeight));
   escapeRingFillEl.setAttribute("y", String(100 - fillHeight));
-
-  if (progress >= 1) {
-    frozen = false;
-    stillSinceAt = null; // don't let a stale stillness timer instantly re-trigger a pause
-  }
 }
 
 function findNearestFaceIndex() {
@@ -723,7 +722,7 @@ function diceFrame(now) {
   } else if (settleState) {
     updateSettle();
   } else if (frozen) {
-    checkFrozenEscape();
+    updateFrozenFill();
   } else {
     updateIdleSpin(dt);
   }

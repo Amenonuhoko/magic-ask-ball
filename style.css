@@ -87,9 +87,10 @@ main {
   height: 100%;
 }
 
-/* Fills vertically (bottom to top) as you tilt away from where the die
-   came to rest, showing how close you are to breaking the freeze and
-   resuming the spin — a rect clipped to the circle, not an angular sweep. */
+/* Very subtle readout of how far you've tilted since the die came to
+   rest — purely informational, no threshold; tilting never resumes the
+   spin on its own. Fills vertically (bottom to top), a rect clipped to
+   the circle, not an angular sweep. */
 .escape-ring {
   position: absolute;
   inset: -12px;
@@ -100,13 +101,13 @@ main {
 
 .escape-ring-track {
   fill: none;
-  stroke: rgba(212, 175, 55, 0.3);
-  stroke-width: 2.5;
+  stroke: rgba(212, 175, 55, 0.08);
+  stroke-width: 1.5;
 }
 
 .escape-ring-fill {
   fill: var(--gold);
-  opacity: 0.5;
+  opacity: 0.1;
 }
 
 .stop-indicator {
