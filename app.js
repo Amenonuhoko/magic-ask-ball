@@ -1,56 +1,18 @@
 // --- DOM refs ---
 
 const stageEl = document.getElementById("stage");
-const shapeEl = document.getElementById("shape");
 const diceCanvasEl = document.getElementById("dice-canvas");
 const diceAnswerEl = document.getElementById("dice-answer");
 const statusEl = document.getElementById("status");
 const enableBtn = document.getElementById("enable-motion");
-const modeButtons = document.querySelectorAll(".mode-btn");
-const calibrationPanel = document.getElementById("calibration");
-const calibrationReadoutEl = document.getElementById("calibration-readout");
-const rangeSlider = document.getElementById("range-slider");
-const rangeValueEl = document.getElementById("range-value");
-const calibrateBtn = document.getElementById("calibrate-btn");
 const recenterBtn = document.getElementById("recenter-btn");
 
 function setStatus(text) {
   statusEl.textContent = text;
 }
 
-// --- modes ---
-
-const MODE_HINTS = {
-  calibrate: "Tilt to see live sensor readings",
-  magic: "Tilt to spin, shake to roll, hold to stop",
-  ball: "Tilt to roll the ball",
-};
-
-let mode = "magic"; // "calibrate" | "magic" | "ball"
-
-function setMode(nextMode) {
-  mode = nextMode;
-
-  modeButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === nextMode));
-
-  stageEl.hidden = nextMode === "calibrate";
-  shapeEl.hidden = nextMode !== "ball";
-  diceCanvasEl.hidden = nextMode !== "magic";
-  diceAnswerEl.hidden = nextMode !== "magic";
-  calibrationPanel.hidden = nextMode !== "calibrate";
-
-  setStatus(MODE_HINTS[nextMode]);
-
-  if (nextMode === "magic") {
-    startDiceRendering();
-  } else {
-    stopDiceRendering();
-  }
-}
-
-modeButtons.forEach((btn) => {
-  btn.addEventListener("click", () => setMode(btn.dataset.mode));
-});
+const IDLE_HINT = "Tilt to spin, shake to roll, hold to stop";
+setStatus("Loading…");
 
 // --- sensor pipeline ---
 //
@@ -85,22 +47,16 @@ let filterInitialized = false;
 
 let lastFrameAt = null;
 
-// Ball/calibration: neutral zero-point and sensitivity (degrees of tilt = full travel).
-let ballZeroBeta = 0;
-let ballZeroGamma = 0;
-let ballRangeDeg = 45;
+// Neutral zero-point and sensitivity (degrees of tilt = full spin speed),
+// used by the die's idle spin. Recenter sets the zero-point to whatever
+// tilt the phone is currently at.
+let tiltZeroBeta = 0;
+let tiltZeroGamma = 0;
+const TILT_RANGE_DEG = 45;
 
-// Current tilt delta (from zero), refreshed every sensor frame regardless of
-// mode. The dice's idle spin (magic mode) reads these directly — same
-// calibrated zero-point/range the ball uses.
+// Current tilt delta (from zero), refreshed every sensor frame.
 let currentDeltaBeta = 0;
 let currentDeltaGamma = 0;
-
-let calibrating = false;
-let calibrationEndAt = 0;
-let calibrationMaxBeta = 0;
-let calibrationMaxGamma = 0;
-let lastReadoutAt = 0;
 
 // Shake detection for dice rolls.
 let prevAccelX = 0;
@@ -135,12 +91,7 @@ function handleMotionEvent(event) {
   if (acc && acc.x !== null) {
     if (hasPrevAccel) {
       const delta = Math.abs(acc.x - prevAccelX) + Math.abs(acc.y - prevAccelY) + Math.abs(acc.z - prevAccelZ);
-      if (
-        mode === "magic" &&
-        !rolling &&
-        delta > SHAKE_THRESHOLD &&
-        performance.now() - lastRollAt > ROLL_COOLDOWN_MS
-      ) {
+      if (!rolling && delta > SHAKE_THRESHOLD && performance.now() - lastRollAt > ROLL_COOLDOWN_MS) {
         rollDice();
       }
     }
@@ -166,55 +117,12 @@ function stepFilter(dt) {
   }
 }
 
-function recenterBall() {
-  ballZeroBeta = filteredBeta;
-  ballZeroGamma = filteredGamma;
+function recenterTilt() {
+  tiltZeroBeta = filteredBeta;
+  tiltZeroGamma = filteredGamma;
 }
 
-function updateCalibrationReadout(deltaBeta, deltaGamma) {
-  const now = performance.now();
-  if (now - lastReadoutAt < 100) return;
-  lastReadoutAt = now;
-  calibrationReadoutEl.textContent =
-    `raw β${rawBeta.toFixed(0)}° γ${rawGamma.toFixed(0)}°\n` +
-    `filtered β${filteredBeta.toFixed(0)}° γ${filteredGamma.toFixed(0)}°\n` +
-    `Δβ${deltaBeta.toFixed(0)}° Δγ${deltaGamma.toFixed(0)}°  range ${ballRangeDeg}°`;
-}
-
-function updateBallMode(deltaBeta, deltaGamma) {
-  const clampedGamma = Math.max(-ballRangeDeg, Math.min(ballRangeDeg, deltaGamma));
-  const clampedBeta = Math.max(-ballRangeDeg, Math.min(ballRangeDeg, deltaBeta));
-  shapeEl.style.left = `${50 + (clampedGamma / ballRangeDeg) * 40}%`;
-  shapeEl.style.top = `${50 + (clampedBeta / ballRangeDeg) * 40}%`;
-}
-
-function startCalibration() {
-  recenterBall();
-  calibrationMaxBeta = 0;
-  calibrationMaxGamma = 0;
-  calibrating = true;
-  calibrationEndAt = performance.now() + 3000;
-  calibrateBtn.disabled = true;
-  calibrateBtn.textContent = "Tilt to every extreme… (3s)";
-}
-
-function finishCalibration() {
-  calibrating = false;
-  calibrateBtn.disabled = false;
-  calibrateBtn.textContent = "Calibrate range (tilt to extremes)";
-  const measured = Math.round(Math.max(calibrationMaxBeta, calibrationMaxGamma, 10));
-  ballRangeDeg = Math.min(measured, Number(rangeSlider.max));
-  rangeSlider.value = String(ballRangeDeg);
-  rangeValueEl.textContent = `${ballRangeDeg}°`;
-}
-
-calibrateBtn.addEventListener("click", startCalibration);
-recenterBtn.addEventListener("click", recenterBall);
-
-rangeSlider.addEventListener("input", () => {
-  ballRangeDeg = Number(rangeSlider.value);
-  rangeValueEl.textContent = `${ballRangeDeg}°`;
-});
+recenterBtn.addEventListener("click", recenterTilt);
 
 function frame(now) {
   requestAnimationFrame(frame);
@@ -229,22 +137,8 @@ function frame(now) {
 
   stepFilter(dt);
 
-  const deltaBeta = filteredBeta - ballZeroBeta;
-  const deltaGamma = filteredGamma - ballZeroGamma;
-  currentDeltaBeta = deltaBeta;
-  currentDeltaGamma = deltaGamma;
-
-  if (calibrating) {
-    calibrationMaxBeta = Math.max(calibrationMaxBeta, Math.abs(deltaBeta));
-    calibrationMaxGamma = Math.max(calibrationMaxGamma, Math.abs(deltaGamma));
-    if (now > calibrationEndAt) finishCalibration();
-  }
-
-  if (mode === "calibrate") {
-    updateCalibrationReadout(deltaBeta, deltaGamma);
-  } else if (mode === "ball") {
-    updateBallMode(deltaBeta, deltaGamma);
-  }
+  currentDeltaBeta = filteredBeta - tiltZeroBeta;
+  currentDeltaGamma = filteredGamma - tiltZeroGamma;
 }
 
 function startListening() {
@@ -291,13 +185,14 @@ function initOrientation() {
       if (orientationOk) {
         enableBtn.hidden = true;
         startListening();
-        setStatus(motionOk ? MODE_HINTS[mode] : "Gyro/shake permission denied — tilt features only.");
+        setStatus(motionOk ? IDLE_HINT : "Gyro/shake permission denied — tilt features only.");
       } else {
         setStatus("Sensor permission denied.");
       }
     });
   } else {
     startListening();
+    setStatus(IDLE_HINT);
   }
 }
 
@@ -333,20 +228,20 @@ let lastDiceFrameAt = null;
 const SPIN_DURATION_MS = 900;
 const SETTLE_DURATION_MS = 450;
 
-// Idle spin: same tilt-delta/range the ball uses, applied as continuous
+// Idle spin: same tilt-delta/range the ball used, applied as continuous
 // angular velocity instead of position — tilting "rolls" the die the same
-// direction the ball would move.
-const MAX_SPIN_SPEED = Math.PI * 1.5; // radians/sec at full calibrated tilt
+// direction a rolling ball would move.
+const MAX_SPIN_SPEED = Math.PI * 1.5; // radians/sec at full tilt range
 const IDLE_SPIN_DEADZONE = 0.02; // ignore sub-noise angular velocity
 
 // Tap-and-hold: freezes the die at whatever orientation it's currently in
 // and captures the phone's current tilt as a dedicated "level" reference —
-// independent of the ball's calibration zero. While frozen, tilting away
-// from that captured reference past a threshold breaks the freeze and
-// resumes spinning (still held or not). Releasing always snaps the die
-// onto whichever face is currently nearest the camera, then re-freezes
-// with a fresh reference captured at that moment — so a further tilt past
-// the threshold resumes spinning again from there too.
+// independent of the Recenter zero-point used for idle spin. While frozen,
+// tilting away from that captured reference past a threshold breaks the
+// freeze and resumes spinning (still held or not). Releasing always snaps
+// the die onto whichever face is currently nearest the camera, then
+// re-freezes with a fresh reference captured at that moment — so a further
+// tilt past the threshold resumes spinning again from there too.
 let frozen = false;
 let frozenZeroBeta = 0;
 let frozenZeroGamma = 0;
@@ -427,12 +322,12 @@ function resizeDiceRenderer() {
 window.addEventListener("resize", resizeDiceRenderer);
 
 function updateIdleSpin(dt) {
-  if (mode !== "magic" || rolling || !diceMesh) return;
+  if (rolling || !diceMesh) return;
 
-  const clampedGamma = Math.max(-ballRangeDeg, Math.min(ballRangeDeg, currentDeltaGamma));
-  const clampedBeta = Math.max(-ballRangeDeg, Math.min(ballRangeDeg, currentDeltaBeta));
-  const normGamma = clampedGamma / ballRangeDeg; // -1..1, same as the ball's horizontal axis
-  const normBeta = clampedBeta / ballRangeDeg; // -1..1, same as the ball's vertical axis
+  const clampedGamma = Math.max(-TILT_RANGE_DEG, Math.min(TILT_RANGE_DEG, currentDeltaGamma));
+  const clampedBeta = Math.max(-TILT_RANGE_DEG, Math.min(TILT_RANGE_DEG, currentDeltaBeta));
+  const normGamma = clampedGamma / TILT_RANGE_DEG; // -1..1
+  const normBeta = clampedBeta / TILT_RANGE_DEG; // -1..1
 
   const angVelY = normGamma * MAX_SPIN_SPEED; // left/right tilt -> spin around vertical axis
   const angVelX = normBeta * MAX_SPIN_SPEED; // forward/back tilt -> spin around horizontal axis
@@ -529,24 +424,31 @@ function updateSettle() {
   }
 }
 
-diceCanvasEl.addEventListener("pointerdown", (event) => {
-  if (mode !== "magic" || !diceMesh) return;
+// The tap-and-hold surface is the whole screen (not just the die itself),
+// except for actual buttons — clicks on those should behave normally and
+// not also freeze/release the die.
+function isInteractiveElement(target) {
+  return target.closest("button, a, input, select, textarea") !== null;
+}
+
+document.addEventListener("pointerdown", (event) => {
+  if (!diceMesh || isInteractiveElement(event.target)) return;
   event.preventDefault();
   try {
-    diceCanvasEl.setPointerCapture(event.pointerId);
+    document.documentElement.setPointerCapture(event.pointerId);
   } catch {
     // ignore — pointer capture is a nicety, not required for correctness
   }
   freezeDice();
 });
 
-diceCanvasEl.addEventListener("pointerup", (event) => {
-  if (mode !== "magic" || !diceMesh) return;
+document.addEventListener("pointerup", (event) => {
+  if (!diceMesh || isInteractiveElement(event.target)) return;
   releaseDice();
 });
 
-diceCanvasEl.addEventListener("pointercancel", (event) => {
-  if (mode !== "magic" || !diceMesh) return;
+document.addEventListener("pointercancel", (event) => {
+  if (!diceMesh || isInteractiveElement(event.target)) return;
   releaseDice();
 });
 
@@ -653,45 +555,19 @@ function startDiceRendering() {
     setStatus("Couldn't load the 3D dice library.");
     return;
   }
-  if (!renderer) {
-    try {
-      initDiceScene();
-    } catch (err) {
-      setStatus("This device/browser can't render 3D (no WebGL).");
-      return;
-    }
+  try {
+    initDiceScene();
+  } catch (err) {
+    setStatus("This device/browser can't render 3D (no WebGL).");
+    return;
   }
-  resizeDiceRenderer();
   lastDiceFrameAt = null;
-  if (diceRafId === null) diceRafId = requestAnimationFrame(diceFrame);
-}
-
-function stopDiceRendering() {
-  if (diceRafId !== null) {
-    cancelAnimationFrame(diceRafId);
-    diceRafId = null;
-  }
-  // Leaving mid-roll (or mid-release-settle) would otherwise leave
-  // elapsed-time-based animation suspended mid-air and jump on return;
-  // just resolve it immediately instead — the result is unaffected, only
-  // the spin/settle flourish is skipped.
-  if (rollState) {
-    diceMesh.quaternion.copy(rollState.finalQuat);
-    finishRoll(rollState.resultIndex);
-    rollState = null;
-  } else if (settleState) {
-    diceMesh.quaternion.copy(settleState.finalQuat);
-    finishRoll(settleState.resultIndex);
-    settleState = null;
-    frozen = true;
-    frozenZeroBeta = filteredBeta;
-    frozenZeroGamma = filteredGamma;
-  }
+  diceRafId = requestAnimationFrame(diceFrame);
 }
 
 // --- boot ---
 
-setMode("magic");
+startDiceRendering();
 initOrientation();
 
 if ("serviceWorker" in navigator) {

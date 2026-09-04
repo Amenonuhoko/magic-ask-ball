@@ -16,32 +16,13 @@
 <body>
   <main>
     <div id="stage" class="stage">
-      <div id="shape" class="shape" hidden></div>
-      <canvas id="dice-canvas" class="dice-canvas" hidden></canvas>
+      <canvas id="dice-canvas" class="dice-canvas"></canvas>
     </div>
-    <p id="dice-answer" class="dice-answer" hidden>Shake to roll</p>
+    <p id="dice-answer" class="dice-answer">Shake to roll</p>
     <p id="status" class="status">Loading…</p>
     <button id="enable-motion" class="enable-motion" hidden>Enable sensors</button>
-    <div id="calibration" class="calibration-page" hidden>
-      <h2 class="calibration-title">Calibrate</h2>
-      <div id="calibration-readout" class="calibration-readout"></div>
-      <div class="calibration-actions">
-        <button id="recenter-btn" class="secondary-btn" type="button">Recenter</button>
-        <button id="calibrate-btn" class="calibrate-btn" type="button">
-          Calibrate range (tilt to extremes)
-        </button>
-      </div>
-      <label class="range-control">
-        Range <span id="range-value">45°</span>
-        <input id="range-slider" type="range" min="10" max="70" value="45" />
-      </label>
-    </div>
   </main>
-  <nav id="mode-carousel" class="carousel">
-    <button class="mode-btn mode-1" data-mode="calibrate" type="button">Calibrate</button>
-    <button class="mode-btn mode-2 active" data-mode="magic" type="button">Magic</button>
-    <button class="mode-btn mode-3" data-mode="ball" type="button">Ball</button>
-  </nav>
+  <button id="recenter-btn" class="recenter-btn" type="button">Recenter</button>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
   <script src="app.js"></script>
 </body>

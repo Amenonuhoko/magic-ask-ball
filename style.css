@@ -12,6 +12,11 @@
 html, body {
   height: 100%;
   margin: 0;
+  /* The whole screen is the tap-and-hold surface for the die, so suppress
+     scrolling/pinch-zoom/pull-to-refresh and text-selection callouts. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 body {
@@ -31,7 +36,7 @@ main {
   justify-content: center;
   gap: 2rem;
   padding: 2rem;
-  padding-bottom: calc(2rem + 88px + env(safe-area-inset-bottom));
+  padding-bottom: calc(2rem + 96px + env(safe-area-inset-bottom));
   text-align: center;
 }
 
@@ -43,30 +48,11 @@ main {
   max-height: 320px;
 }
 
-/* Ball mode: a plain circle. Position (left/top) is set from JS every
-   frame with NO transition, for instant 1:1 tracking with tilt. */
-.shape {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 38%;
-  height: 38%;
-  transform: translate(-50%, -50%);
-  background: linear-gradient(135deg, var(--accent), #ff5c9d);
-  border-radius: 50%;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
-}
-
 .dice-canvas {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  /* tap-and-hold shouldn't trigger scrolling, text selection, or the
-     browser's long-press callout while the user is holding the die */
-  touch-action: none;
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 .dice-answer {
@@ -92,117 +78,25 @@ main {
   cursor: pointer;
 }
 
-.calibration-page {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1.1rem;
-  font-size: 0.85rem;
-  max-width: 320px;
-}
-
-.calibration-title {
-  margin: 0;
-  font-size: 1.3rem;
-}
-
-.calibration-readout {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.75rem;
-  opacity: 0.7;
-  line-height: 1.6;
-  white-space: pre-line;
-}
-
-.calibration-actions {
-  display: flex;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  justify-content: center;
-}
-
-.range-control {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  opacity: 0.85;
-}
-
-.range-control input[type="range"] {
-  accent-color: #2fc9a0;
-}
-
-.calibrate-btn,
-.secondary-btn {
-  border: none;
-  border-radius: 999px;
-  padding: 0.6rem 1.1rem;
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.calibrate-btn {
-  background: #2fc9a0;
-  color: #06231b;
-}
-
-.secondary-btn {
+/* Deliberately far from the die, at the very bottom of the screen, so it
+   can't be mistaken for part of the tap-and-hold area. */
+.recenter-btn {
+  position: fixed;
+  left: 50%;
+  bottom: calc(1.25rem + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
   background: transparent;
   color: var(--fg);
-  border: 1.5px solid rgba(244, 244, 245, 0.4);
-}
-
-.calibrate-btn:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.carousel {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  gap: 0.75rem;
-  padding: 1rem;
-  padding-bottom: calc(1rem + env(safe-area-inset-bottom));
-  overflow-x: auto;
-  scroll-snap-type: x proximity;
-  background: linear-gradient(to top, var(--bg) 60%, transparent);
-}
-
-.mode-btn {
-  flex: 0 0 auto;
-  scroll-snap-align: center;
-  border: 2px solid transparent;
+  border: 1.5px solid rgba(244, 244, 245, 0.35);
   border-radius: 999px;
-  padding: 0.65rem 1.25rem;
-  font-size: 0.9rem;
+  padding: 0.6rem 1.4rem;
+  font-size: 0.85rem;
   font-weight: 600;
-  color: #fff;
+  opacity: 0.7;
   cursor: pointer;
-  opacity: 0.75;
-  transition: opacity 0.2s, border-color 0.2s, transform 0.2s;
 }
 
-.mode-btn:active {
-  transform: scale(0.96);
-}
-
-.mode-btn.active {
+.recenter-btn:active {
   opacity: 1;
-  border-color: #fff;
-}
-
-.mode-btn.mode-1 {
-  background: #ff5c5c;
-}
-
-.mode-btn.mode-2 {
-  background: #7c5cff;
-}
-
-.mode-btn.mode-3 {
-  background: #2fc9a0;
+  transform: translateX(-50%) scale(0.96);
 }
