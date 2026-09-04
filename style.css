@@ -57,11 +57,11 @@ main {
 }
 
 /* Camera-viewfinder overlay on top of the die: corner brackets frame the
-   stage, a crosshair + reticle dot double as a level indicator, a very
-   subtle vertical fill shows tilt-since-rest, and small icons (rather than
-   text) show how the current result was revealed. Everything here is
-   information that used to live in separate widgets, now co-located in one
-   glanceable spot. */
+   stage, a dim light glowing beneath the die doubles as a level indicator,
+   a very subtle vertical fill shows tilt-since-rest, and small icons
+   (rather than text) show how the current result was revealed. Everything
+   here is information that used to live in separate widgets, now
+   co-located in one glanceable spot. */
 .viewfinder {
   position: absolute;
   inset: -12px;
@@ -95,14 +95,11 @@ main {
   opacity: 0.1;
 }
 
-.vf-crosshair {
-  stroke: rgba(244, 244, 245, 0.35);
-  stroke-width: 1.2;
-}
-
-.reticle-dot {
-  fill: var(--gold);
-  filter: drop-shadow(0 0 4px rgba(212, 175, 55, 0.7));
+/* A dim light glowing in the patch beneath the die, not a dot at center —
+   fill comes entirely from the radial gradient in index.html (opaque core
+   fading to nothing at the edge), so this stays soft rather than hard-edged. */
+.level-light {
+  fill: url(#level-light-gradient);
 }
 
 .vf-icon-fill {

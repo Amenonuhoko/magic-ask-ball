@@ -7,7 +7,7 @@ const statusEl = document.getElementById("status");
 const enableBtn = document.getElementById("enable-motion");
 const recenterBtn = document.getElementById("recenter-btn");
 const viewfinderEl = document.getElementById("viewfinder");
-const reticleDotEl = document.getElementById("reticle-dot");
+const levelLightEl = document.getElementById("level-light");
 const escapeRingFillEl = document.getElementById("escape-ring-fill");
 const statusIconTapEl = document.getElementById("status-icon-tap");
 const statusIconPauseEl = document.getElementById("status-icon-pause");
@@ -205,18 +205,23 @@ function recenterTilt() {
 
 recenterBtn.addEventListener("click", recenterTilt);
 
-// Bubble-level style reticle, built into the viewfinder overlay. Centered on
+// Bubble-level style indicator, built into the viewfinder overlay as a dim
+// light rather than a dot — confined to a small patch beneath where the die
+// sits (LEVEL_LIGHT_BASE_Y), not the center of the stage, so it only ever
+// drifts within that patch as the phone tilts. Centered on
 // frozenZeroBeta/Gamma — the same "level" reference the resting-tilt fill
-// uses — so pausing (tap or auto pause-detection) recalibrates the dot right
-// back to center. Before the first pause it's centered on physically flat
-// (frozenZero starts at 0,0).
-const RETICLE_DOT_RADIUS = 38; // in the 0-100 SVG viewBox
+// uses — so pausing (tap or auto pause-detection) recalibrates it right
+// back to the middle of that patch. Before the first pause it's centered on
+// physically flat (frozenZero starts at 0,0).
+const LEVEL_LIGHT_BASE_Y = 74; // in the 0-100 SVG viewBox; below stage-center (50), beneath the die
+const LEVEL_LIGHT_X_RANGE = 24;
+const LEVEL_LIGHT_Y_RANGE = 5;
 
-function updateReticleDot() {
+function updateLevelLight() {
   const nx = Math.max(-1, Math.min(1, (filteredGamma - frozenZeroGamma) / TILT_VISUAL_RANGE_DEG));
   const ny = Math.max(-1, Math.min(1, (filteredBeta - frozenZeroBeta) / TILT_VISUAL_RANGE_DEG));
-  reticleDotEl.setAttribute("cx", String(50 + nx * RETICLE_DOT_RADIUS));
-  reticleDotEl.setAttribute("cy", String(50 + ny * RETICLE_DOT_RADIUS));
+  levelLightEl.setAttribute("cx", String(50 + nx * LEVEL_LIGHT_X_RANGE));
+  levelLightEl.setAttribute("cy", String(LEVEL_LIGHT_BASE_Y + ny * LEVEL_LIGHT_Y_RANGE));
 }
 
 function updatePauseDetection(now, dt) {
@@ -257,7 +262,7 @@ function frame(now) {
   currentDeltaBeta = filteredBeta - tiltZeroBeta;
   currentDeltaGamma = filteredGamma - tiltZeroGamma;
 
-  updateReticleDot();
+  updateLevelLight();
   updatePauseDetection(now, dt);
 }
 
