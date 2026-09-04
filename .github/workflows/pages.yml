@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [claude/pwa-phone-access-8d26zt]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
