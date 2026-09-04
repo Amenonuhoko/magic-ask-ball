@@ -22,7 +22,7 @@ function setStatus(text) {
 
 const MODE_HINTS = {
   calibrate: "Tilt to see live sensor readings",
-  magic: "Shake your phone to roll",
+  magic: "Tilt to spin it, shake to roll",
   ball: "Tilt to roll the ball",
 };
 
@@ -89,6 +89,12 @@ let lastFrameAt = null;
 let ballZeroBeta = 0;
 let ballZeroGamma = 0;
 let ballRangeDeg = 45;
+
+// Current tilt delta (from zero), refreshed every sensor frame regardless of
+// mode. The dice's idle spin (magic mode) reads these directly — same
+// calibrated zero-point/range the ball uses.
+let currentDeltaBeta = 0;
+let currentDeltaGamma = 0;
 
 let calibrating = false;
 let calibrationEndAt = 0;
@@ -225,6 +231,8 @@ function frame(now) {
 
   const deltaBeta = filteredBeta - ballZeroBeta;
   const deltaGamma = filteredGamma - ballZeroGamma;
+  currentDeltaBeta = deltaBeta;
+  currentDeltaGamma = deltaGamma;
 
   if (calibrating) {
     calibrationMaxBeta = Math.max(calibrationMaxBeta, Math.abs(deltaBeta));
@@ -320,9 +328,16 @@ let diceRafId = null;
 let rolling = false;
 let lastRollAt = 0;
 let rollState = null;
+let lastDiceFrameAt = null;
 
 const SPIN_DURATION_MS = 900;
 const SETTLE_DURATION_MS = 450;
+
+// Idle spin: same tilt-delta/range the ball uses, applied as continuous
+// angular velocity instead of position — tilting "rolls" the die the same
+// direction the ball would move.
+const MAX_SPIN_SPEED = Math.PI * 1.5; // radians/sec at full calibrated tilt
+const IDLE_SPIN_DEADZONE = 0.02; // ignore sub-noise angular velocity
 
 function easeOutCubic(t) {
   return 1 - Math.pow(1 - t, 3);
@@ -396,8 +411,31 @@ function resizeDiceRenderer() {
 
 window.addEventListener("resize", resizeDiceRenderer);
 
+function updateIdleSpin(dt) {
+  if (mode !== "magic" || rolling || !diceMesh) return;
+
+  const clampedGamma = Math.max(-ballRangeDeg, Math.min(ballRangeDeg, currentDeltaGamma));
+  const clampedBeta = Math.max(-ballRangeDeg, Math.min(ballRangeDeg, currentDeltaBeta));
+  const normGamma = clampedGamma / ballRangeDeg; // -1..1, same as the ball's horizontal axis
+  const normBeta = clampedBeta / ballRangeDeg; // -1..1, same as the ball's vertical axis
+
+  const angVelY = normGamma * MAX_SPIN_SPEED; // left/right tilt -> spin around vertical axis
+  const angVelX = normBeta * MAX_SPIN_SPEED; // forward/back tilt -> spin around horizontal axis
+
+  if (Math.abs(angVelX) < IDLE_SPIN_DEADZONE && Math.abs(angVelY) < IDLE_SPIN_DEADZONE) return;
+
+  const qY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angVelY * dt);
+  const qX = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), angVelX * dt);
+  // Compose in world space (premultiply) so "tilt right" always spins the
+  // same screen-space direction regardless of the die's current orientation.
+  diceMesh.quaternion.premultiply(qY).premultiply(qX);
+  // Repeated premultiplication accumulates floating-point error over many
+  // frames; renormalize every frame so it can't drift off the unit sphere.
+  diceMesh.quaternion.normalize();
+}
+
 function rollDice() {
-  if (rolling) return;
+  if (rolling || !diceMesh) return;
   rolling = true;
   diceAnswerEl.textContent = "Rolling…";
   diceAnswerEl.style.color = "";
@@ -470,8 +508,16 @@ function finishRoll(index) {
   }
 }
 
-function diceFrame() {
+function diceFrame(now) {
   diceRafId = requestAnimationFrame(diceFrame);
+
+  if (lastDiceFrameAt === null) {
+    lastDiceFrameAt = now;
+  }
+  const dt = Math.min((now - lastDiceFrameAt) / 1000, 0.1); // clamp for tab-switch pauses
+  lastDiceFrameAt = now;
+
+  updateIdleSpin(dt);
   updateRoll();
   renderer.render(scene, camera);
 }
@@ -481,8 +527,16 @@ function startDiceRendering() {
     setStatus("Couldn't load the 3D dice library.");
     return;
   }
-  if (!renderer) initDiceScene();
+  if (!renderer) {
+    try {
+      initDiceScene();
+    } catch (err) {
+      setStatus("This device/browser can't render 3D (no WebGL).");
+      return;
+    }
+  }
   resizeDiceRenderer();
+  lastDiceFrameAt = null;
   if (diceRafId === null) diceRafId = requestAnimationFrame(diceFrame);
 }
 
@@ -490,6 +544,14 @@ function stopDiceRendering() {
   if (diceRafId !== null) {
     cancelAnimationFrame(diceRafId);
     diceRafId = null;
+  }
+  // Leaving mid-roll would otherwise leave elapsed-time-based animation
+  // suspended mid-air and jump on return; just resolve it immediately
+  // instead — the result is unaffected, only the spin flourish is skipped.
+  if (rollState) {
+    diceMesh.quaternion.copy(rollState.finalQuat);
+    finishRoll(rollState.resultIndex);
+    rollState = null;
   }
 }
 
