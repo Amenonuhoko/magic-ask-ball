@@ -29,8 +29,9 @@ setStatus("Loading…");
 // so it can't drift. If no gyro is available we fall back to a tight,
 // frame-rate-independent low-pass filter directly on the raw orientation.
 //
-// devicemotion's accelerationIncludingGravity is used separately (and
-// independently of this filter) to detect a shake gesture for dice rolls.
+// devicemotion's rotationRate is also used separately (independently of
+// this filter) as an accumulating "total rotation" meter to detect a shake
+// gesture for dice rolls — see handleMotionEvent.
 
 const GYRO_FUSION_ALPHA = 0.96; // weight on the gyro-predicted value vs. raw orientation
 const GYRO_FRESH_WINDOW_MS = 300; // ignore stale rotationRate if devicemotion stopped firing
@@ -63,16 +64,29 @@ const TILT_RANGE_DEG = 30;
 let currentDeltaBeta = 0;
 let currentDeltaGamma = 0;
 
-// Shake detection for dice rolls. A shake redirects the die instantly —
-// see rollDice() — so the cooldown here only needs to be long enough to
-// stop a single continuous shake motion from retriggering many times a
-// second (devicemotion fires ~60Hz), not to block deliberate follow-up
-// shakes in a new direction.
-let prevAccelX = 0;
-let prevAccelY = 0;
-let prevAccelZ = 0;
-let hasPrevAccel = false;
-const SHAKE_THRESHOLD = 16; // sum of abs deltas across x/y/z, in m/s^2
+// Shake detection for dice rolls, based on TOTAL accumulated rotation
+// (gyroscope rotationRate integrated over time) rather than a single sharp
+// acceleration spike. This is a decaying "leaky bucket": every devicemotion
+// tick adds |βrate|+|γrate| * dt, and the whole total decays by half every
+// ROTATION_HALF_LIFE_SEC. That means genuinely shaking back and forth —
+// even gently, even if no single tick is a hard jerk — keeps adding to the
+// total faster than it drains, and it reliably crosses the threshold;
+// stopping lets it drain back down within a second or so. A shake redirects
+// the die instantly — see rollDice() — so the cooldown only needs to be
+// long enough to stop a single continuous shake from retriggering many
+// times a second (devicemotion fires ~60Hz), not to block deliberate
+// follow-up shakes in a new direction.
+const ROTATION_TRIGGER_THRESHOLD_DEG = 150; // total accumulated rotation to trigger a roll
+// A leaky bucket like this has a hard floor: no matter how long you sustain
+// a rotation rate below (threshold * ln2 / half-life), it can NEVER cross
+// the threshold — the decay caps its steady-state value below it. At 1.2s
+// that floor is ~87°/s combined |β|+|γ|, low enough that a genuinely gentle
+// sustained back-and-forth still gets there in a couple of seconds, not
+// just a single hard jerk.
+const ROTATION_HALF_LIFE_SEC = 1.2;
+let rotationAccumDeg = 0;
+let rotationAccumPeakRate = 0; // peak |βrate|+|γrate| seen since the last trigger, drives roll speed
+let lastMotionEventAt = null;
 const SHAKE_RETRIGGER_COOLDOWN_MS = 150;
 let lastRollTriggerAt = 0;
 
@@ -106,31 +120,35 @@ function handleOrientationEvent(event) {
 
 function handleMotionEvent(event) {
   const rate = event.rotationRate;
+  const now = performance.now();
+
   if (rate && rate.beta !== null && rate.gamma !== null) {
     gyroBeta = rate.beta;
     gyroGamma = rate.gamma;
     hasGyro = true;
-    lastGyroAt = performance.now();
+    lastGyroAt = now;
   }
 
-  const acc = event.accelerationIncludingGravity;
-  if (acc && acc.x !== null) {
-    if (hasPrevAccel) {
-      const dx = acc.x - prevAccelX;
-      const dy = acc.y - prevAccelY;
-      const dz = acc.z - prevAccelZ;
-      const delta = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
-      // No `!rolling` guard: a shake can interrupt and redirect a roll
-      // already in progress, not just start a fresh one.
-      if (delta > SHAKE_THRESHOLD && performance.now() - lastRollTriggerAt > SHAKE_RETRIGGER_COOLDOWN_MS) {
-        rollDice(delta, dx, dy);
-      }
+  if (lastMotionEventAt !== null) {
+    const dt = Math.min((now - lastMotionEventAt) / 1000, 0.2); // clamp for irregular event gaps
+    const decay = Math.pow(0.5, dt / ROTATION_HALF_LIFE_SEC);
+    rotationAccumDeg *= decay;
+
+    if (rate && rate.beta !== null && rate.gamma !== null) {
+      const rotSpeed = Math.abs(rate.beta) + Math.abs(rate.gamma);
+      rotationAccumDeg += rotSpeed * dt;
+      rotationAccumPeakRate = Math.max(rotationAccumPeakRate, rotSpeed);
     }
-    prevAccelX = acc.x;
-    prevAccelY = acc.y;
-    prevAccelZ = acc.z;
-    hasPrevAccel = true;
+
+    // No `!rolling` guard: a shake can interrupt and redirect a roll
+    // already in progress, not just start a fresh one.
+    if (rotationAccumDeg > ROTATION_TRIGGER_THRESHOLD_DEG && now - lastRollTriggerAt > SHAKE_RETRIGGER_COOLDOWN_MS) {
+      rollDice(rotationAccumPeakRate, rate ? rate.beta : undefined, rate ? rate.gamma : undefined);
+      rotationAccumDeg = 0;
+      rotationAccumPeakRate = 0;
+    }
   }
+  lastMotionEventAt = now;
 }
 
 function stepFilter(dt) {
@@ -300,8 +318,16 @@ const OUTCOME_PHRASES = [
   "Ask again when the moment is right",
 ];
 
-// Shuffled so faces don't visibly cluster all 4 of one category together.
-const FACE_PHRASE_ORDER = [4, 12, 0, 17, 8, 1, 15, 9, 3, 19, 11, 6, 2, 14, 7, 16, 10, 5, 18, 13];
+// Arranged as a gradient like a traditional d20's success spread: face 1 is
+// firmly No, face 20 is firmly Yes, with No -> Maybe not -> Try again ->
+// Maybe yes -> Yes moving through the numbers in between.
+const FACE_PHRASE_ORDER = [
+  4, 5, 6, 7, // 1-4: No
+  12, 13, 14, 15, // 5-8: Maybe not
+  16, 17, 18, 19, // 9-12: Try again
+  8, 9, 10, 11, // 13-16: Maybe yes
+  0, 1, 2, 3, // 17-20: Yes
+];
 
 const FACES = FACE_PHRASE_ORDER.map((phraseIndex, i) => ({
   number: i + 1,
@@ -594,29 +620,34 @@ document.addEventListener("pointerdown", (event) => {
   pauseAndReveal("tap");
 });
 
-// A harder/faster shake spins the die faster: shake intensity (the same
-// accelerometer-delta magnitude that triggers the roll) maps to how many
-// full turns it makes during the fixed spin duration, so the roll visibly
-// moves at "the speed of the shake" rather than a constant animation.
+// A harder/faster shake spins the die faster: the peak rotation rate seen
+// while accumulating toward the trigger maps to how many full turns it
+// makes during the fixed spin duration, so the roll visibly moves at "the
+// speed of the shake" rather than a constant animation.
 const SHAKE_MIN_TURNS = 2;
 const SHAKE_MAX_TURNS = 6;
-const SHAKE_INTENSITY_CEILING = 60; // delta magnitude at/above which turns cap out at SHAKE_MAX_TURNS
+const ROTATION_PEAK_FLOOR_DEG_PER_SEC = 80; // peak rate at/below which turns bottom out at SHAKE_MIN_TURNS
+const ROTATION_PEAK_CEILING_DEG_PER_SEC = 500; // peak rate at/above which turns cap out at SHAKE_MAX_TURNS
 
 // A shake's direction, not just its magnitude, drives the die: shaking
 // left kills whatever spin is already happening and starts a fresh spin
 // leftward instantly (no blending old momentum into new — the animation
 // always restarts from the die's CURRENT visual orientation), shaking
 // right does the same in reverse. Uses the same axis convention as tilt's
-// idle spin: a horizontal (x) shake spins around the vertical axis, a
-// vertical (y) shake around the horizontal axis.
-function directionalSpinAxis(dx, dy) {
-  if (dx === undefined || dy === undefined || (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6)) {
+// idle spin: rotation rate around the device's beta (X) axis spins the die
+// around X, rate around gamma (Y) spins it around Y.
+function directionalSpinAxis(betaRate, gammaRate) {
+  if (
+    betaRate === undefined ||
+    gammaRate === undefined ||
+    (Math.abs(betaRate) < 1e-6 && Math.abs(gammaRate) < 1e-6)
+  ) {
     return new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
   }
-  return new THREE.Vector3(dy, -dx, 0).normalize();
+  return new THREE.Vector3(betaRate, gammaRate, 0).normalize();
 }
 
-function rollDice(shakeIntensity, dx, dy) {
+function rollDice(peakRotationRate, betaRate, gammaRate) {
   if (!diceMesh) return;
   frozen = false;
   settleState = null; // a shake mid-reveal takes priority; don't let it resume stale later
@@ -625,10 +656,13 @@ function rollDice(shakeIntensity, dx, dy) {
   diceAnswerEl.textContent = "Rolling…";
   stopIndicatorEl.hidden = true;
 
-  const intensity = shakeIntensity === undefined ? SHAKE_THRESHOLD : shakeIntensity;
+  const intensity = peakRotationRate === undefined ? ROTATION_PEAK_FLOOR_DEG_PER_SEC : peakRotationRate;
   const intensityT = Math.max(
     0,
-    Math.min(1, (intensity - SHAKE_THRESHOLD) / (SHAKE_INTENSITY_CEILING - SHAKE_THRESHOLD))
+    Math.min(
+      1,
+      (intensity - ROTATION_PEAK_FLOOR_DEG_PER_SEC) / (ROTATION_PEAK_CEILING_DEG_PER_SEC - ROTATION_PEAK_FLOOR_DEG_PER_SEC)
+    )
   );
   const totalTurns = SHAKE_MIN_TURNS + intensityT * (SHAKE_MAX_TURNS - SHAKE_MIN_TURNS);
 
@@ -642,7 +676,7 @@ function rollDice(shakeIntensity, dx, dy) {
   rollState = {
     phase: "spin",
     startAt: performance.now(),
-    spinAxis: directionalSpinAxis(dx, dy),
+    spinAxis: directionalSpinAxis(betaRate, gammaRate),
     // Current orientation, NOT the previous rollState's spinStartQuat —
     // this is what makes a redirect instant rather than blended.
     spinStartQuat: diceMesh.quaternion.clone(),
