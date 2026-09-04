@@ -81,9 +81,12 @@ let lastRollTriggerAt = 0;
 // movement) stays below a small angular-speed threshold for a sustained
 // stretch, that counts as a "pause" and reveals the current face — the same
 // action a tap performs, just hands-free. Requires genuine movement to have
-// happened first, so it can't fire the instant the page loads.
-const PAUSE_STILL_THRESHOLD_DEG_PER_SEC = 5; // tightened from 8 — small real movements now correctly count as "moving"
-const PAUSE_DURATION_MS = 350;
+// happened first, so it can't fire the instant the page loads. Both bounds
+// are deliberately generous — natural hand tremor while holding a phone
+// "still" is well above 0°/s, and a real intentional pause is worth waiting
+// a beat to confirm, so this shouldn't fire on a brief mid-motion lull.
+const PAUSE_STILL_THRESHOLD_DEG_PER_SEC = 12; // minimum speed to still count as "moving"
+const PAUSE_DURATION_MS = 600; // minimum time held below that speed before it counts as a pause
 let stillSinceAt = null;
 let hasMovedSincePause = false;
 let prevPauseBeta = 0;
