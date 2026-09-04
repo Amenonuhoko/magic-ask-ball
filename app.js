@@ -22,7 +22,7 @@ function setStatus(text) {
 
 const MODE_HINTS = {
   calibrate: "Tilt to see live sensor readings",
-  magic: "Tilt to spin it, shake to roll",
+  magic: "Tilt to spin, shake to roll, hold to stop",
   ball: "Tilt to roll the ball",
 };
 
@@ -339,6 +339,21 @@ const SETTLE_DURATION_MS = 450;
 const MAX_SPIN_SPEED = Math.PI * 1.5; // radians/sec at full calibrated tilt
 const IDLE_SPIN_DEADZONE = 0.02; // ignore sub-noise angular velocity
 
+// Tap-and-hold: freezes the die at whatever orientation it's currently in
+// and captures the phone's current tilt as a dedicated "level" reference —
+// independent of the ball's calibration zero. While frozen, tilting away
+// from that captured reference past a threshold breaks the freeze and
+// resumes spinning (still held or not). Releasing always snaps the die
+// onto whichever face is currently nearest the camera, then re-freezes
+// with a fresh reference captured at that moment — so a further tilt past
+// the threshold resumes spinning again from there too.
+let frozen = false;
+let frozenZeroBeta = 0;
+let frozenZeroGamma = 0;
+let settleState = null;
+const HOLD_ESCAPE_THRESHOLD_DEG = 22;
+const RELEASE_SETTLE_DURATION_MS = 300;
+
 function easeOutCubic(t) {
   return 1 - Math.pow(1 - t, 3);
 }
@@ -434,8 +449,111 @@ function updateIdleSpin(dt) {
   diceMesh.quaternion.normalize();
 }
 
+function checkFrozenEscape() {
+  const deltaBeta = filteredBeta - frozenZeroBeta;
+  const deltaGamma = filteredGamma - frozenZeroGamma;
+  if (Math.hypot(deltaBeta, deltaGamma) > HOLD_ESCAPE_THRESHOLD_DEG) {
+    frozen = false;
+  }
+}
+
+function findNearestFaceIndex() {
+  const cameraDir = new THREE.Vector3(0, 0, 1);
+  let bestIndex = 0;
+  let bestDot = -Infinity;
+  for (let i = 0; i < faceNormals.length; i++) {
+    const worldNormal = faceNormals[i].clone().applyQuaternion(diceMesh.quaternion);
+    const dot = worldNormal.dot(cameraDir);
+    if (dot > bestDot) {
+      bestDot = dot;
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
+}
+
+function freezeDice() {
+  if (!diceMesh) return;
+  rollState = null;
+  settleState = null;
+  rolling = false;
+  frozen = true;
+  frozenZeroBeta = filteredBeta;
+  frozenZeroGamma = filteredGamma;
+}
+
+function releaseDice() {
+  if (!diceMesh) return;
+  frozen = false;
+  rollState = null;
+
+  const nearestIndex = findNearestFaceIndex();
+  const cameraDir = new THREE.Vector3(0, 0, 1);
+  const targetNormalLocal = faceNormals[nearestIndex].clone().normalize();
+  // setFromUnitVectors(local, camera) alone would compute a fresh
+  // "canonical" orientation from scratch, discarding whatever roll the die
+  // currently has — since that target vector doesn't depend on currentQuat,
+  // the result can differ from the current orientation by a large, jarring
+  // twist even though the chosen face was already nearly camera-facing.
+  // Instead, correct just the small residual misalignment on top of the
+  // current orientation, so the snap is minimal and preserves roll.
+  const currentQuat = diceMesh.quaternion.clone();
+  const currentWorldNormal = targetNormalLocal.clone().applyQuaternion(currentQuat);
+  const correctionQuat = new THREE.Quaternion().setFromUnitVectors(currentWorldNormal, cameraDir);
+  const finalQuat = correctionQuat.multiply(currentQuat);
+
+  settleState = {
+    startAt: performance.now(),
+    fromQuat: diceMesh.quaternion.clone(),
+    finalQuat,
+    resultIndex: nearestIndex,
+  };
+}
+
+function updateSettle() {
+  if (!settleState) return;
+  const now = performance.now();
+  const t = Math.min((now - settleState.startAt) / RELEASE_SETTLE_DURATION_MS, 1);
+  const eased = easeInOutCubic(t);
+  diceMesh.quaternion.copy(settleState.fromQuat).slerp(settleState.finalQuat, eased);
+
+  if (t >= 1) {
+    const resultIndex = settleState.resultIndex;
+    settleState = null;
+    finishRoll(resultIndex);
+    // Re-freeze with a fresh reference so a further tilt past the
+    // threshold resumes spinning again from this resting position.
+    frozen = true;
+    frozenZeroBeta = filteredBeta;
+    frozenZeroGamma = filteredGamma;
+  }
+}
+
+diceCanvasEl.addEventListener("pointerdown", (event) => {
+  if (mode !== "magic" || !diceMesh) return;
+  event.preventDefault();
+  try {
+    diceCanvasEl.setPointerCapture(event.pointerId);
+  } catch {
+    // ignore — pointer capture is a nicety, not required for correctness
+  }
+  freezeDice();
+});
+
+diceCanvasEl.addEventListener("pointerup", (event) => {
+  if (mode !== "magic" || !diceMesh) return;
+  releaseDice();
+});
+
+diceCanvasEl.addEventListener("pointercancel", (event) => {
+  if (mode !== "magic" || !diceMesh) return;
+  releaseDice();
+});
+
 function rollDice() {
   if (rolling || !diceMesh) return;
+  frozen = false;
+  settleState = null; // a shake mid-release-settle takes priority; don't let it resume stale later
   rolling = true;
   diceAnswerEl.textContent = "Rolling…";
   diceAnswerEl.style.color = "";
@@ -517,8 +635,16 @@ function diceFrame(now) {
   const dt = Math.min((now - lastDiceFrameAt) / 1000, 0.1); // clamp for tab-switch pauses
   lastDiceFrameAt = now;
 
-  updateIdleSpin(dt);
-  updateRoll();
+  if (rollState) {
+    updateRoll();
+  } else if (settleState) {
+    updateSettle();
+  } else if (frozen) {
+    checkFrozenEscape();
+  } else {
+    updateIdleSpin(dt);
+  }
+
   renderer.render(scene, camera);
 }
 
@@ -545,13 +671,21 @@ function stopDiceRendering() {
     cancelAnimationFrame(diceRafId);
     diceRafId = null;
   }
-  // Leaving mid-roll would otherwise leave elapsed-time-based animation
-  // suspended mid-air and jump on return; just resolve it immediately
-  // instead — the result is unaffected, only the spin flourish is skipped.
+  // Leaving mid-roll (or mid-release-settle) would otherwise leave
+  // elapsed-time-based animation suspended mid-air and jump on return;
+  // just resolve it immediately instead — the result is unaffected, only
+  // the spin/settle flourish is skipped.
   if (rollState) {
     diceMesh.quaternion.copy(rollState.finalQuat);
     finishRoll(rollState.resultIndex);
     rollState = null;
+  } else if (settleState) {
+    diceMesh.quaternion.copy(settleState.finalQuat);
+    finishRoll(settleState.resultIndex);
+    settleState = null;
+    frozen = true;
+    frozenZeroBeta = filteredBeta;
+    frozenZeroGamma = filteredGamma;
   }
 }
 
