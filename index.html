@@ -15,10 +15,27 @@
 </head>
 <body>
   <main>
+    <div id="level-indicator" class="level-indicator">
+      <svg viewBox="0 0 100 100" width="60" height="60">
+        <circle cx="50" cy="50" r="46" class="level-ring" />
+        <line x1="50" y1="6" x2="50" y2="14" class="level-tick" />
+        <line x1="50" y1="94" x2="50" y2="86" class="level-tick" />
+        <line x1="6" y1="50" x2="14" y2="50" class="level-tick" />
+        <line x1="94" y1="50" x2="86" y2="50" class="level-tick" />
+        <circle id="level-dot" cx="50" cy="50" r="5" class="level-dot" />
+      </svg>
+      <span class="level-label">Level</span>
+    </div>
     <div id="stage" class="stage">
+      <svg id="escape-ring" class="escape-ring" viewBox="0 0 100 100" hidden>
+        <circle cx="50" cy="50" r="47" class="escape-ring-track" pathLength="100" />
+        <circle id="escape-ring-progress" cx="50" cy="50" r="47" class="escape-ring-progress"
+          pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" />
+      </svg>
       <canvas id="dice-canvas" class="dice-canvas"></canvas>
     </div>
     <p id="dice-answer" class="dice-answer">Shake to roll</p>
+    <p id="stop-indicator" class="stop-indicator" hidden></p>
     <p id="status" class="status">Loading…</p>
     <button id="enable-motion" class="enable-motion" hidden>Enable sensors</button>
   </main>

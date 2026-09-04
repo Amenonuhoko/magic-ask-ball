@@ -3,9 +3,13 @@
 const stageEl = document.getElementById("stage");
 const diceCanvasEl = document.getElementById("dice-canvas");
 const diceAnswerEl = document.getElementById("dice-answer");
+const stopIndicatorEl = document.getElementById("stop-indicator");
 const statusEl = document.getElementById("status");
 const enableBtn = document.getElementById("enable-motion");
 const recenterBtn = document.getElementById("recenter-btn");
+const levelDotEl = document.getElementById("level-dot");
+const escapeRingEl = document.getElementById("escape-ring");
+const escapeRingProgressEl = document.getElementById("escape-ring-progress");
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -105,7 +109,7 @@ function handleMotionEvent(event) {
     if (hasPrevAccel) {
       const delta = Math.abs(acc.x - prevAccelX) + Math.abs(acc.y - prevAccelY) + Math.abs(acc.z - prevAccelZ);
       if (!rolling && delta > SHAKE_THRESHOLD && performance.now() - lastRollAt > ROLL_COOLDOWN_MS) {
-        rollDice();
+        rollDice(delta);
       }
     }
     prevAccelX = acc.x;
@@ -137,6 +141,18 @@ function recenterTilt() {
 
 recenterBtn.addEventListener("click", recenterTilt);
 
+// Bubble-level style indicator showing the phone's absolute tilt away from
+// physically flat (beta=gamma=0) — independent of Recenter's zero-point.
+const LEVEL_DISPLAY_RANGE_DEG = 45; // tilt at which the dot reaches the ring edge
+const LEVEL_DOT_RADIUS = 38; // in the 0-100 SVG viewBox
+
+function updateLevelIndicator() {
+  const nx = Math.max(-1, Math.min(1, filteredGamma / LEVEL_DISPLAY_RANGE_DEG));
+  const ny = Math.max(-1, Math.min(1, filteredBeta / LEVEL_DISPLAY_RANGE_DEG));
+  levelDotEl.setAttribute("cx", String(50 + nx * LEVEL_DOT_RADIUS));
+  levelDotEl.setAttribute("cy", String(50 + ny * LEVEL_DOT_RADIUS));
+}
+
 function updatePauseDetection(now, dt) {
   const gyroFresh = hasGyro && now - lastGyroAt < GYRO_FRESH_WINDOW_MS;
   const deviceSpeed = gyroFresh
@@ -155,7 +171,7 @@ function updatePauseDetection(now, dt) {
 
   if (hasMovedSincePause && !frozen && diceMesh && now - stillSinceAt > PAUSE_DURATION_MS) {
     hasMovedSincePause = false;
-    pauseAndReveal();
+    pauseAndReveal("pause");
   }
 }
 
@@ -175,6 +191,7 @@ function frame(now) {
   currentDeltaBeta = filteredBeta - tiltZeroBeta;
   currentDeltaGamma = filteredGamma - tiltZeroGamma;
 
+  updateLevelIndicator();
   updatePauseDetection(now, dt);
 }
 
@@ -462,7 +479,12 @@ function updateIdleSpin(dt) {
 function checkFrozenEscape() {
   const deltaBeta = filteredBeta - frozenZeroBeta;
   const deltaGamma = filteredGamma - frozenZeroGamma;
-  if (Math.hypot(deltaBeta, deltaGamma) > HOLD_ESCAPE_THRESHOLD_DEG) {
+  const progress = Math.min(Math.hypot(deltaBeta, deltaGamma) / HOLD_ESCAPE_THRESHOLD_DEG, 1);
+  // pathLength="100" on the SVG circles means dasharray/dashoffset are
+  // already in percent, so no circumference math needed here.
+  escapeRingProgressEl.style.strokeDashoffset = String(100 * (1 - progress));
+
+  if (progress >= 1) {
     frozen = false;
     stillSinceAt = null; // don't let a stale stillness timer instantly re-trigger a pause
   }
@@ -486,7 +508,7 @@ function findNearestFaceIndex() {
 // Snaps the die onto whichever face is currently nearest the camera and
 // reveals it. Triggered by a tap or by the phone going physically still
 // (see updatePauseDetection) — either way, "pausing" is what shows a result.
-function pauseAndReveal() {
+function pauseAndReveal(source) {
   if (!diceMesh) return;
   rollState = null;
 
@@ -510,6 +532,7 @@ function pauseAndReveal() {
     fromQuat: diceMesh.quaternion.clone(),
     finalQuat,
     resultIndex: nearestIndex,
+    source,
   };
 }
 
@@ -522,13 +545,15 @@ function updateSettle() {
 
   if (t >= 1) {
     const resultIndex = settleState.resultIndex;
+    const source = settleState.source;
     settleState = null;
-    finishRoll(resultIndex);
+    finishRoll(resultIndex, source);
     // Freeze with a fresh reference so a further tilt past the threshold
     // resumes spinning again from this resting position.
     frozen = true;
     frozenZeroBeta = filteredBeta;
     frozenZeroGamma = filteredGamma;
+    escapeRingProgressEl.style.strokeDashoffset = "100";
   }
 }
 
@@ -542,15 +567,31 @@ function isInteractiveElement(target) {
 document.addEventListener("pointerdown", (event) => {
   if (!diceMesh || isInteractiveElement(event.target)) return;
   event.preventDefault();
-  pauseAndReveal();
+  pauseAndReveal("tap");
 });
 
-function rollDice() {
+// A harder/faster shake spins the die faster: shake intensity (the same
+// accelerometer-delta magnitude that triggers the roll) maps to how many
+// full turns it makes during the fixed spin duration, so the roll visibly
+// moves at "the speed of the shake" rather than a constant animation.
+const SHAKE_MIN_TURNS = 2;
+const SHAKE_MAX_TURNS = 6;
+const SHAKE_INTENSITY_CEILING = 60; // delta magnitude at/above which turns cap out at SHAKE_MAX_TURNS
+
+function rollDice(shakeIntensity) {
   if (rolling || !diceMesh) return;
   frozen = false;
   settleState = null; // a shake mid-reveal takes priority; don't let it resume stale later
   rolling = true;
   diceAnswerEl.textContent = "Rolling…";
+  stopIndicatorEl.hidden = true;
+
+  const intensity = shakeIntensity === undefined ? SHAKE_THRESHOLD : shakeIntensity;
+  const intensityT = Math.max(
+    0,
+    Math.min(1, (intensity - SHAKE_THRESHOLD) / (SHAKE_INTENSITY_CEILING - SHAKE_THRESHOLD))
+  );
+  const totalTurns = SHAKE_MIN_TURNS + intensityT * (SHAKE_MAX_TURNS - SHAKE_MIN_TURNS);
 
   const resultIndex = Math.floor(Math.random() * 20);
   const cameraDir = new THREE.Vector3(0, 0, 1);
@@ -572,6 +613,7 @@ function rollDice() {
     spinStartQuat: diceMesh.quaternion.clone(),
     resultIndex,
     finalQuat,
+    totalTurns,
   };
 }
 
@@ -582,8 +624,7 @@ function updateRoll() {
   if (rollState.phase === "spin") {
     const t = Math.min((now - rollState.startAt) / SPIN_DURATION_MS, 1);
     const eased = easeOutCubic(t);
-    const totalTurns = 3.5;
-    const angle = eased * totalTurns * Math.PI * 2;
+    const angle = eased * rollState.totalTurns * Math.PI * 2;
     const q = new THREE.Quaternion().setFromAxisAngle(rollState.spinAxis, angle);
     diceMesh.quaternion.copy(rollState.spinStartQuat).premultiply(q);
 
@@ -605,10 +646,20 @@ function updateRoll() {
   }
 }
 
-function finishRoll(index) {
+const STOP_INDICATOR_TEXT = {
+  tap: "Stopped by tap",
+  pause: "Paused — held still",
+};
+
+function finishRoll(index, source) {
   rolling = false;
   lastRollAt = performance.now();
   diceAnswerEl.textContent = FACES[index].phrase;
+
+  const indicatorText = STOP_INDICATOR_TEXT[source];
+  stopIndicatorEl.textContent = indicatorText || "";
+  stopIndicatorEl.hidden = !indicatorText;
+
   if (navigator.vibrate) {
     try {
       navigator.vibrate([30, 40, 30]);
@@ -626,6 +677,14 @@ function diceFrame(now) {
   }
   const dt = Math.min((now - lastDiceFrameAt) / 1000, 0.1); // clamp for tab-switch pauses
   lastDiceFrameAt = now;
+
+  // SVGElement.hidden as a JS property isn't reliably supported on older
+  // mobile browsers; toggle the attribute directly instead.
+  if (frozen) {
+    escapeRingEl.removeAttribute("hidden");
+  } else {
+    escapeRingEl.setAttribute("hidden", "");
+  }
 
   if (rollState) {
     updateRoll();

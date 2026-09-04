@@ -41,6 +41,37 @@ main {
   text-align: center;
 }
 
+.level-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: -1rem;
+}
+
+.level-ring {
+  fill: rgba(212, 175, 55, 0.05);
+  stroke: rgba(212, 175, 55, 0.4);
+  stroke-width: 2;
+}
+
+.level-tick {
+  stroke: rgba(212, 175, 55, 0.3);
+  stroke-width: 2;
+}
+
+.level-dot {
+  fill: var(--gold);
+  filter: drop-shadow(0 0 4px rgba(212, 175, 55, 0.7));
+}
+
+.level-label {
+  font-size: 0.65rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
 .stage {
   position: relative;
   width: 55vmin;
@@ -54,6 +85,41 @@ main {
   inset: 0;
   width: 100%;
   height: 100%;
+}
+
+/* Fills up as you tilt away from where the die came to rest, showing how
+   close you are to breaking the freeze and resuming the spin. */
+.escape-ring {
+  position: absolute;
+  inset: -12px;
+  width: calc(100% + 24px);
+  height: calc(100% + 24px);
+  pointer-events: none;
+  transform: rotate(-90deg);
+}
+
+.escape-ring-track {
+  fill: none;
+  stroke: rgba(212, 175, 55, 0.15);
+  stroke-width: 2.5;
+}
+
+.escape-ring-progress {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.05s linear;
+}
+
+.stop-indicator {
+  margin: 0;
+  margin-top: -1.25rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  color: var(--gold);
 }
 
 .dice-answer {
