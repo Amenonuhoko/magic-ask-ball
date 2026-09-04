@@ -15,36 +15,67 @@
 </head>
 <body>
   <main>
-    <div id="level-indicator" class="level-indicator">
-      <svg viewBox="0 0 100 100" width="60" height="60">
-        <circle cx="50" cy="50" r="46" class="level-ring" />
-        <line x1="50" y1="6" x2="50" y2="14" class="level-tick" />
-        <line x1="50" y1="94" x2="50" y2="86" class="level-tick" />
-        <line x1="6" y1="50" x2="14" y2="50" class="level-tick" />
-        <line x1="94" y1="50" x2="86" y2="50" class="level-tick" />
-        <circle id="level-dot" cx="50" cy="50" r="5" class="level-dot" />
-      </svg>
-      <span class="level-label">Level</span>
-    </div>
     <div id="stage" class="stage">
-      <svg id="escape-ring" class="escape-ring" viewBox="0 0 100 100" hidden>
+      <canvas id="dice-canvas" class="dice-canvas"></canvas>
+      <svg id="viewfinder" class="viewfinder" viewBox="0 0 100 100">
         <defs>
           <clipPath id="escape-fill-clip">
             <circle cx="50" cy="50" r="47" />
           </clipPath>
         </defs>
+
+        <!-- corner brackets: frame the die like a camera viewfinder; turn
+             gold while a result is locked in (see .is-frozen) -->
+        <path class="vf-bracket" d="M 4 16 L 4 4 L 16 4" />
+        <path class="vf-bracket" d="M 84 4 L 96 4 L 96 16" />
+        <path class="vf-bracket" d="M 96 84 L 96 96 L 84 96" />
+        <path class="vf-bracket" d="M 16 96 L 4 96 L 4 84" />
+
+        <!-- very subtle readout of tilt since the die came to rest; fills
+             vertically, purely informational -->
         <circle cx="50" cy="50" r="47" class="escape-ring-track" />
         <rect id="escape-ring-fill" class="escape-ring-fill" x="0" y="100" width="100" height="0"
           clip-path="url(#escape-fill-clip)" />
+
+        <!-- crosshair with a gap at center -->
+        <line x1="50" y1="40" x2="50" y2="46" class="vf-crosshair" />
+        <line x1="50" y1="54" x2="50" y2="60" class="vf-crosshair" />
+        <line x1="40" y1="50" x2="46" y2="50" class="vf-crosshair" />
+        <line x1="54" y1="50" x2="60" y2="50" class="vf-crosshair" />
+
+        <!-- level reticle: drifts off-center with tilt, recenters on every
+             pause (tap or hands-free stillness) -->
+        <circle id="reticle-dot" cx="50" cy="50" r="3.5" class="reticle-dot" />
+
+        <!-- how the current result was revealed -->
+        <g id="status-icon-tap" class="status-icon" hidden>
+          <circle cx="50" cy="88" r="3" class="vf-icon-fill" />
+          <circle cx="50" cy="88" r="7" class="vf-icon-ring" />
+        </g>
+        <g id="status-icon-pause" class="status-icon" hidden>
+          <rect x="46" y="84" width="2.5" height="9" rx="1" class="vf-icon-fill" />
+          <rect x="51.5" y="84" width="2.5" height="9" rx="1" class="vf-icon-fill" />
+        </g>
       </svg>
-      <canvas id="dice-canvas" class="dice-canvas"></canvas>
     </div>
     <p id="dice-answer" class="dice-answer">Shake to roll</p>
-    <p id="stop-indicator" class="stop-indicator" hidden></p>
     <p id="status" class="status">Loading…</p>
     <button id="enable-motion" class="enable-motion" hidden>Enable sensors</button>
   </main>
-  <button id="recenter-btn" class="recenter-btn" type="button">Recenter</button>
+  <button id="recenter-btn" class="recenter-btn" type="button" aria-label="Recenter" title="Recenter">⌖</button>
+  <button id="debug-toggle" class="debug-toggle" type="button">⚙</button>
+  <div id="debug-panel" class="debug-panel" hidden>
+    <div id="debug-live" class="debug-live">—</div>
+    <div class="debug-actions">
+      <button id="debug-record-btn" class="debug-btn" type="button">● Record</button>
+      <button id="debug-copy-btn" class="debug-btn" type="button" hidden>Copy data</button>
+    </div>
+    <div id="debug-summary" class="debug-summary">
+      Records raw motion data while you shake normally, so real numbers can
+      replace guesses. Tap Record, shake a few times like you normally
+      would, tap Stop, then Copy and paste the result into the chat.
+    </div>
+  </div>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
   <script src="app.js"></script>
 </body>

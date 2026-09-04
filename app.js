@@ -3,19 +3,25 @@
 const stageEl = document.getElementById("stage");
 const diceCanvasEl = document.getElementById("dice-canvas");
 const diceAnswerEl = document.getElementById("dice-answer");
-const stopIndicatorEl = document.getElementById("stop-indicator");
 const statusEl = document.getElementById("status");
 const enableBtn = document.getElementById("enable-motion");
 const recenterBtn = document.getElementById("recenter-btn");
-const levelDotEl = document.getElementById("level-dot");
-const escapeRingEl = document.getElementById("escape-ring");
+const viewfinderEl = document.getElementById("viewfinder");
+const reticleDotEl = document.getElementById("reticle-dot");
 const escapeRingFillEl = document.getElementById("escape-ring-fill");
+const statusIconTapEl = document.getElementById("status-icon-tap");
+const statusIconPauseEl = document.getElementById("status-icon-pause");
+const debugToggleBtn = document.getElementById("debug-toggle");
+const debugPanelEl = document.getElementById("debug-panel");
+const debugLiveEl = document.getElementById("debug-live");
+const debugRecordBtn = document.getElementById("debug-record-btn");
+const debugCopyBtn = document.getElementById("debug-copy-btn");
+const debugSummaryEl = document.getElementById("debug-summary");
 
 function setStatus(text) {
   statusEl.textContent = text;
 }
 
-const IDLE_HINT = "Tilt to spin, shake to roll, pause to reveal";
 setStatus("Loading…");
 
 // --- sensor pipeline ---
@@ -71,19 +77,30 @@ let currentDeltaGamma = 0;
 // ROTATION_HALF_LIFE_SEC. That means genuinely shaking back and forth —
 // even gently, even if no single tick is a hard jerk — keeps adding to the
 // total faster than it drains, and it reliably crosses the threshold;
-// stopping lets it drain back down within a second or so. A shake redirects
-// the die instantly — see rollDice() — so the cooldown only needs to be
-// long enough to stop a single continuous shake from retriggering many
-// times a second (devicemotion fires ~60Hz), not to block deliberate
-// follow-up shakes in a new direction.
-const ROTATION_TRIGGER_THRESHOLD_DEG = 150; // total accumulated rotation to trigger a roll
+// stopping lets it drain back down within a couple of seconds.
+//
+// Two triggers feed off the same accumulator:
+//  - INSTANT_SPIKE_RATE_DEG_PER_SEC: a single tick this fast fires
+//    immediately, bypassing accumulation entirely — an obviously hard shake
+//    shouldn't have to wait on anything.
+//  - The accumulator threshold, for everything short of that: LOWER while
+//    a roll is already in progress (redirecting is easier once you're
+//    already mid-shake than starting cold) than while idle.
+//
+// A shake redirects the die instantly — see rollDice() — so the cooldown
+// only needs to be long enough to stop a single continuous shake from
+// retriggering many times a second (devicemotion fires ~60Hz), not to
+// block deliberate follow-up shakes in a new direction.
+const ROTATION_TRIGGER_THRESHOLD_DEG = 45; // total accumulated rotation to START a roll from idle
+const ROTATION_REDIRECT_THRESHOLD_DEG = 18; // lower bar to REDIRECT a roll already in progress
+const INSTANT_SPIKE_RATE_DEG_PER_SEC = 350; // a single tick this fast triggers immediately, no accumulation needed
 // A leaky bucket like this has a hard floor: no matter how long you sustain
 // a rotation rate below (threshold * ln2 / half-life), it can NEVER cross
-// the threshold — the decay caps its steady-state value below it. At 1.2s
-// that floor is ~87°/s combined |β|+|γ|, low enough that a genuinely gentle
-// sustained back-and-forth still gets there in a couple of seconds, not
-// just a single hard jerk.
-const ROTATION_HALF_LIFE_SEC = 1.2;
+// the threshold — the decay caps its steady-state value below it. At 1.5s
+// half-life, the idle-trigger floor is ~21°/s and the redirect floor is
+// ~8°/s combined |β|+|γ|, low enough that a genuinely gentle sustained
+// back-and-forth still gets there, not just a single hard jerk.
+const ROTATION_HALF_LIFE_SEC = 1.5;
 let rotationAccumDeg = 0;
 let rotationAccumPeakRate = 0; // peak |βrate|+|γrate| seen since the last trigger, drives roll speed
 let lastMotionEventAt = null;
@@ -121,8 +138,10 @@ function handleOrientationEvent(event) {
 function handleMotionEvent(event) {
   const rate = event.rotationRate;
   const now = performance.now();
+  const rateValid = !!(rate && rate.beta !== null && rate.gamma !== null);
+  const rotSpeed = rateValid ? Math.abs(rate.beta) + Math.abs(rate.gamma) : 0;
 
-  if (rate && rate.beta !== null && rate.gamma !== null) {
+  if (rateValid) {
     gyroBeta = rate.beta;
     gyroGamma = rate.gamma;
     hasGyro = true;
@@ -134,16 +153,29 @@ function handleMotionEvent(event) {
     const decay = Math.pow(0.5, dt / ROTATION_HALF_LIFE_SEC);
     rotationAccumDeg *= decay;
 
-    if (rate && rate.beta !== null && rate.gamma !== null) {
-      const rotSpeed = Math.abs(rate.beta) + Math.abs(rate.gamma);
+    if (rateValid) {
       rotationAccumDeg += rotSpeed * dt;
       rotationAccumPeakRate = Math.max(rotationAccumPeakRate, rotSpeed);
     }
 
+    const cooldownClear = now - lastRollTriggerAt > SHAKE_RETRIGGER_COOLDOWN_MS;
+    // Lower bar to redirect a roll already in progress than to start one
+    // from idle — you're already mid-shake at that point.
+    const activeThreshold = rolling ? ROTATION_REDIRECT_THRESHOLD_DEG : ROTATION_TRIGGER_THRESHOLD_DEG;
+    const instantSpike = rotSpeed >= INSTANT_SPIKE_RATE_DEG_PER_SEC;
+    const shouldTrigger = cooldownClear && (instantSpike || rotationAccumDeg > activeThreshold);
+
+    // Snapshot before any reset below, so a recorded sample reflects the
+    // accumulator value that actually decided this tick.
+    if (debugRecording) {
+      recordDebugSample(now, rateValid ? rate.beta : null, rateValid ? rate.gamma : null, rotSpeed, rotationAccumDeg, activeThreshold, shouldTrigger, instantSpike);
+    }
+    updateDebugLiveReadout(rotSpeed, rotationAccumDeg);
+
     // No `!rolling` guard: a shake can interrupt and redirect a roll
     // already in progress, not just start a fresh one.
-    if (rotationAccumDeg > ROTATION_TRIGGER_THRESHOLD_DEG && now - lastRollTriggerAt > SHAKE_RETRIGGER_COOLDOWN_MS) {
-      rollDice(rotationAccumPeakRate, rate ? rate.beta : undefined, rate ? rate.gamma : undefined);
+    if (shouldTrigger) {
+      rollDice(Math.max(rotationAccumPeakRate, rotSpeed), rateValid ? rate.beta : undefined, rateValid ? rate.gamma : undefined);
       rotationAccumDeg = 0;
       rotationAccumPeakRate = 0;
     }
@@ -173,17 +205,18 @@ function recenterTilt() {
 
 recenterBtn.addEventListener("click", recenterTilt);
 
-// Bubble-level style indicator. Centered on frozenZeroBeta/Gamma — the same
-// "level" reference the resting-tilt fill uses — so pausing (tap or auto
-// pause-detection) recalibrates the dot right back to center. Before the
-// first pause it's centered on physically flat (frozenZero starts at 0,0).
-const LEVEL_DOT_RADIUS = 38; // in the 0-100 SVG viewBox
+// Bubble-level style reticle, built into the viewfinder overlay. Centered on
+// frozenZeroBeta/Gamma — the same "level" reference the resting-tilt fill
+// uses — so pausing (tap or auto pause-detection) recalibrates the dot right
+// back to center. Before the first pause it's centered on physically flat
+// (frozenZero starts at 0,0).
+const RETICLE_DOT_RADIUS = 38; // in the 0-100 SVG viewBox
 
-function updateLevelIndicator() {
+function updateReticleDot() {
   const nx = Math.max(-1, Math.min(1, (filteredGamma - frozenZeroGamma) / TILT_VISUAL_RANGE_DEG));
   const ny = Math.max(-1, Math.min(1, (filteredBeta - frozenZeroBeta) / TILT_VISUAL_RANGE_DEG));
-  levelDotEl.setAttribute("cx", String(50 + nx * LEVEL_DOT_RADIUS));
-  levelDotEl.setAttribute("cy", String(50 + ny * LEVEL_DOT_RADIUS));
+  reticleDotEl.setAttribute("cx", String(50 + nx * RETICLE_DOT_RADIUS));
+  reticleDotEl.setAttribute("cy", String(50 + ny * RETICLE_DOT_RADIUS));
 }
 
 function updatePauseDetection(now, dt) {
@@ -224,7 +257,7 @@ function frame(now) {
   currentDeltaBeta = filteredBeta - tiltZeroBeta;
   currentDeltaGamma = filteredGamma - tiltZeroGamma;
 
-  updateLevelIndicator();
+  updateReticleDot();
   updatePauseDetection(now, dt);
 }
 
@@ -272,16 +305,105 @@ function initOrientation() {
       if (orientationOk) {
         enableBtn.hidden = true;
         startListening();
-        setStatus(motionOk ? IDLE_HINT : "Gyro/shake permission denied — tilt features only.");
+        setStatus(motionOk ? "" : "Gyro/shake permission denied — tilt features only.");
       } else {
         setStatus("Sensor permission denied.");
       }
     });
   } else {
     startListening();
-    setStatus(IDLE_HINT);
+    setStatus("");
   }
 }
+
+// --- debug/calibration recorder ---
+//
+// Captures raw motion samples during real shaking so the shake-trigger
+// thresholds above can be tuned against actual data instead of guesses.
+// Everything stays local until "Copy data" is tapped, which puts a JSON
+// blob (constants + samples) on the clipboard to paste back into chat.
+
+let debugRecording = false;
+let debugSamples = [];
+let debugRecordStartAt = 0;
+
+function updateDebugLiveReadout(rotSpeed, accum) {
+  if (debugPanelEl.hidden) return;
+  debugLiveEl.textContent = `rate: ${rotSpeed.toFixed(0)} deg/s\naccum: ${accum.toFixed(0)} deg`;
+}
+
+function recordDebugSample(now, beta, gamma, rotSpeed, accum, threshold, triggered, instantSpike) {
+  debugSamples.push({
+    t: Math.round(now - debugRecordStartAt),
+    beta: beta === null ? null : Math.round(beta * 10) / 10,
+    gamma: gamma === null ? null : Math.round(gamma * 10) / 10,
+    rate: Math.round(rotSpeed * 10) / 10,
+    accum: Math.round(accum * 10) / 10,
+    threshold,
+    triggered,
+    instantSpike,
+  });
+}
+
+function computeDebugSummary(samples) {
+  if (samples.length === 0) return "No samples recorded.";
+  const rates = samples.map((s) => s.rate);
+  const peak = Math.max(...rates);
+  const avg = rates.reduce((a, b) => a + b, 0) / rates.length;
+  const triggerCount = samples.filter((s) => s.triggered).length;
+  const durationSec = (samples[samples.length - 1].t - samples[0].t) / 1000;
+  return (
+    `${samples.length} samples over ${durationSec.toFixed(1)}s\n` +
+    `peak rate: ${peak.toFixed(0)} deg/s, avg: ${avg.toFixed(0)} deg/s\n` +
+    `triggers fired: ${triggerCount}`
+  );
+}
+
+function startDebugRecording() {
+  debugRecording = true;
+  debugSamples = [];
+  debugRecordStartAt = performance.now();
+  debugRecordBtn.textContent = "■ Stop";
+  debugCopyBtn.hidden = true;
+  debugSummaryEl.textContent = "Recording… shake normally, then tap Stop.";
+}
+
+function stopDebugRecording() {
+  debugRecording = false;
+  debugRecordBtn.textContent = "● Record";
+  debugCopyBtn.hidden = debugSamples.length === 0;
+  debugSummaryEl.textContent = computeDebugSummary(debugSamples);
+}
+
+debugToggleBtn.addEventListener("click", () => {
+  debugPanelEl.hidden = !debugPanelEl.hidden;
+});
+
+debugRecordBtn.addEventListener("click", () => {
+  if (debugRecording) {
+    stopDebugRecording();
+  } else {
+    startDebugRecording();
+  }
+});
+
+debugCopyBtn.addEventListener("click", async () => {
+  const payload = JSON.stringify({
+    constants: {
+      ROTATION_TRIGGER_THRESHOLD_DEG,
+      ROTATION_REDIRECT_THRESHOLD_DEG,
+      INSTANT_SPIKE_RATE_DEG_PER_SEC,
+      ROTATION_HALF_LIFE_SEC,
+    },
+    samples: debugSamples,
+  });
+  try {
+    await navigator.clipboard.writeText(payload);
+    debugSummaryEl.textContent = "Copied to clipboard.";
+  } catch {
+    debugSummaryEl.textContent = payload;
+  }
+});
 
 // --- dice (three.js) ---
 
@@ -654,7 +776,10 @@ function rollDice(peakRotationRate, betaRate, gammaRate) {
   rolling = true;
   lastRollTriggerAt = performance.now();
   diceAnswerEl.textContent = "Rolling…";
-  stopIndicatorEl.hidden = true;
+  statusIconTapEl.setAttribute("hidden", "");
+  statusIconPauseEl.setAttribute("hidden", "");
+  escapeRingFillEl.setAttribute("height", "0");
+  escapeRingFillEl.setAttribute("y", "100");
 
   const intensity = peakRotationRate === undefined ? ROTATION_PEAK_FLOOR_DEG_PER_SEC : peakRotationRate;
   const intensityT = Math.max(
@@ -715,18 +840,18 @@ function updateRoll() {
   }
 }
 
-const STOP_INDICATOR_TEXT = {
-  tap: "Stopped by tap",
-  pause: "Paused — held still",
-};
-
+// How the current result was revealed is shown as an icon in the
+// viewfinder (a tap ripple vs. a pause glyph) rather than as text — the
+// icon that isn't the source stays hidden, and both stay hidden when the
+// result came from a shake finishing on its own.
 function finishRoll(index, source) {
   rolling = false;
   diceAnswerEl.textContent = FACES[index].phrase;
 
-  const indicatorText = STOP_INDICATOR_TEXT[source];
-  stopIndicatorEl.textContent = indicatorText || "";
-  stopIndicatorEl.hidden = !indicatorText;
+  statusIconTapEl.setAttribute("hidden", "");
+  statusIconPauseEl.setAttribute("hidden", "");
+  if (source === "tap") statusIconTapEl.removeAttribute("hidden");
+  else if (source === "pause") statusIconPauseEl.removeAttribute("hidden");
 
   if (navigator.vibrate) {
     try {
@@ -746,13 +871,9 @@ function diceFrame(now) {
   const dt = Math.min((now - lastDiceFrameAt) / 1000, 0.1); // clamp for tab-switch pauses
   lastDiceFrameAt = now;
 
-  // SVGElement.hidden as a JS property isn't reliably supported on older
-  // mobile browsers; toggle the attribute directly instead.
-  if (frozen) {
-    escapeRingEl.removeAttribute("hidden");
-  } else {
-    escapeRingEl.setAttribute("hidden", "");
-  }
+  // The viewfinder frame itself is always visible; only its color cues
+  // whether the die is currently locked on a revealed result.
+  viewfinderEl.classList.toggle("is-frozen", frozen);
 
   if (rollState) {
     updateRoll();

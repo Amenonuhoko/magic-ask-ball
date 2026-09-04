@@ -41,37 +41,6 @@ main {
   text-align: center;
 }
 
-.level-indicator {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.3rem;
-  margin-bottom: -1rem;
-}
-
-.level-ring {
-  fill: rgba(212, 175, 55, 0.05);
-  stroke: rgba(212, 175, 55, 0.4);
-  stroke-width: 2;
-}
-
-.level-tick {
-  stroke: rgba(212, 175, 55, 0.3);
-  stroke-width: 2;
-}
-
-.level-dot {
-  fill: var(--gold);
-  filter: drop-shadow(0 0 4px rgba(212, 175, 55, 0.7));
-}
-
-.level-label {
-  font-size: 0.65rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  opacity: 0.55;
-}
-
 .stage {
   position: relative;
   width: 55vmin;
@@ -87,16 +56,32 @@ main {
   height: 100%;
 }
 
-/* Very subtle readout of how far you've tilted since the die came to
-   rest — purely informational, no threshold; tilting never resumes the
-   spin on its own. Fills vertically (bottom to top), a rect clipped to
-   the circle, not an angular sweep. */
-.escape-ring {
+/* Camera-viewfinder overlay on top of the die: corner brackets frame the
+   stage, a crosshair + reticle dot double as a level indicator, a very
+   subtle vertical fill shows tilt-since-rest, and small icons (rather than
+   text) show how the current result was revealed. Everything here is
+   information that used to live in separate widgets, now co-located in one
+   glanceable spot. */
+.viewfinder {
   position: absolute;
   inset: -12px;
   width: calc(100% + 24px);
   height: calc(100% + 24px);
   pointer-events: none;
+}
+
+.vf-bracket {
+  fill: none;
+  stroke: rgba(244, 244, 245, 0.3);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  transition: stroke 0.25s ease;
+}
+
+/* Brackets turn gold when a result is locked in (paused, tap or hands-free
+   stillness) — a "focus confirmed" cue instead of a text label. */
+.viewfinder.is-frozen .vf-bracket {
+  stroke: rgba(212, 175, 55, 0.65);
 }
 
 .escape-ring-track {
@@ -110,14 +95,25 @@ main {
   opacity: 0.1;
 }
 
-.stop-indicator {
-  margin: 0;
-  margin-top: -1.25rem;
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  opacity: 0.55;
-  color: var(--gold);
+.vf-crosshair {
+  stroke: rgba(244, 244, 245, 0.35);
+  stroke-width: 1.2;
+}
+
+.reticle-dot {
+  fill: var(--gold);
+  filter: drop-shadow(0 0 4px rgba(212, 175, 55, 0.7));
+}
+
+.vf-icon-fill {
+  fill: var(--gold);
+}
+
+.vf-icon-ring {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 1.5;
+  opacity: 0.6;
 }
 
 .dice-answer {
@@ -157,9 +153,13 @@ main {
   color: var(--fg);
   border: 1.5px solid rgba(244, 244, 245, 0.35);
   border-radius: 999px;
-  padding: 0.6rem 1.4rem;
-  font-size: 0.85rem;
-  font-weight: 600;
+  width: 2.75rem;
+  height: 2.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+  line-height: 1;
   opacity: 0.7;
   cursor: pointer;
 }
@@ -167,4 +167,75 @@ main {
 .recenter-btn:active {
   opacity: 1;
   transform: translateX(-50%) scale(0.96);
+}
+
+/* A quiet, out-of-the-way toggle for the motion-data recorder — not part
+   of the main experience, just a tool for calibrating the shake trigger. */
+.debug-toggle {
+  position: fixed;
+  top: calc(0.75rem + env(safe-area-inset-top));
+  right: 0.75rem;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid rgba(244, 244, 245, 0.25);
+  border-radius: 999px;
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.9rem;
+  line-height: 1;
+  opacity: 0.35;
+  cursor: pointer;
+}
+
+.debug-toggle:active {
+  opacity: 0.8;
+}
+
+.debug-panel {
+  position: fixed;
+  top: calc(3rem + env(safe-area-inset-top));
+  right: 0.75rem;
+  left: 0.75rem;
+  max-width: 320px;
+  margin-left: auto;
+  background: rgba(8, 8, 11, 0.92);
+  border: 1px solid rgba(212, 175, 55, 0.25);
+  border-radius: 12px;
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  z-index: 10;
+}
+
+.debug-live {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+  white-space: pre-line;
+  opacity: 0.85;
+  color: var(--gold);
+  line-height: 1.5;
+}
+
+.debug-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.debug-btn {
+  background: rgba(212, 175, 55, 0.15);
+  color: var(--gold);
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  border-radius: 999px;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.debug-summary {
+  font-size: 0.7rem;
+  line-height: 1.5;
+  white-space: pre-line;
+  opacity: 0.65;
 }
