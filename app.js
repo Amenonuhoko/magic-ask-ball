@@ -22,99 +22,119 @@ const SHAPES = [
   },
 ];
 
+// Shapes triggered by tilting the phone in a given direction. "circle" is
+// reserved for holding the phone flat/level.
+const TILT_SHAPES = ["square", "triangle", "diamond", "pentagon", "hexagon", "star", "arrow"];
+const FLAT_SHAPE = "circle";
+
 const shapeEl = document.getElementById("shape");
 const statusEl = document.getElementById("status");
 const enableBtn = document.getElementById("enable-motion");
 
-let currentShapeIndex = 0;
+const shapesByName = Object.fromEntries(SHAPES.map((s) => [s.name, s]));
+let currentShapeName = null;
+
+function setShape(name, statusSuffix) {
+  if (name === currentShapeName) return;
+  currentShapeName = name;
+
+  const shape = shapesByName[name];
+  shapeEl.style.clipPath = shape.clipPath;
+  shapeEl.classList.add("pulse");
+  setTimeout(() => shapeEl.classList.remove("pulse"), 200);
+  setStatus(`Shape: ${shape.name}${statusSuffix || ""}`);
+}
 
 function setStatus(text) {
   statusEl.textContent = text;
 }
 
-function nextShape() {
-  let index;
-  do {
-    index = Math.floor(Math.random() * SHAPES.length);
-  } while (index === currentShapeIndex);
-  currentShapeIndex = index;
+// --- orientation detection ---
 
-  const shape = SHAPES[index];
-  shapeEl.style.clipPath = shape.clipPath;
-  shapeEl.classList.add("pulse");
-  setTimeout(() => shapeEl.classList.remove("pulse"), 200);
-  setStatus(`Shape: ${shape.name}`);
-}
+const FLAT_THRESHOLD = 15; // degrees of tilt below which we call it "flat"
+const FLAT_HYSTERESIS = 5; // extra margin to avoid flickering at the edge
+const UPDATE_INTERVAL_MS = 120;
 
-// --- movement detection ---
+// Smoothed readings, low-pass filtered to cut sensor jitter.
+let smoothBeta = 0;
+let smoothGamma = 0;
+let hasReading = false;
+let isFlat = true;
+let lastUpdateAt = 0;
 
-const MOVEMENT_THRESHOLD = 15; // sum of abs deltas across x/y/z, in m/s^2
-const TRIGGER_COOLDOWN_MS = 400;
+function handleOrientation(event) {
+  const { beta, gamma } = event; // beta: front/back tilt, gamma: left/right tilt
+  if (beta === null || gamma === null) return;
 
-let lastX = null;
-let lastY = null;
-let lastZ = null;
-let lastTriggerAt = 0;
-
-function handleMotion(event) {
-  const acc = event.accelerationIncludingGravity || event.acceleration;
-  if (!acc || acc.x === null) return;
-
-  const { x, y, z } = acc;
-
-  if (lastX === null) {
-    lastX = x;
-    lastY = y;
-    lastZ = z;
-    return;
+  const smoothing = 0.2;
+  if (!hasReading) {
+    smoothBeta = beta;
+    smoothGamma = gamma;
+    hasReading = true;
+  } else {
+    smoothBeta += (beta - smoothBeta) * smoothing;
+    smoothGamma += (gamma - smoothGamma) * smoothing;
   }
-
-  const delta = Math.abs(x - lastX) + Math.abs(y - lastY) + Math.abs(z - lastZ);
-  lastX = x;
-  lastY = y;
-  lastZ = z;
 
   const now = Date.now();
-  if (delta > MOVEMENT_THRESHOLD && now - lastTriggerAt > TRIGGER_COOLDOWN_MS) {
-    lastTriggerAt = now;
-    nextShape();
+  if (now - lastUpdateAt < UPDATE_INTERVAL_MS) return;
+  lastUpdateAt = now;
+
+  const magnitude = Math.sqrt(smoothBeta * smoothBeta + smoothGamma * smoothGamma);
+  const debugSuffix = ` (β${smoothBeta.toFixed(0)}° γ${smoothGamma.toFixed(0)}°)`;
+
+  // Schmitt trigger between flat/tilted so it doesn't flicker right at the boundary.
+  if (isFlat) {
+    if (magnitude > FLAT_THRESHOLD + FLAT_HYSTERESIS) isFlat = false;
+  } else if (magnitude < FLAT_THRESHOLD - FLAT_HYSTERESIS) {
+    isFlat = true;
   }
-}
 
-function startMotionListening() {
-  window.addEventListener("devicemotion", handleMotion);
-  setStatus("Listening for movement…");
-}
-
-function initMotion() {
-  if (typeof DeviceMotionEvent === "undefined") {
-    setStatus("This device doesn't support motion detection.");
+  if (isFlat) {
+    setShape(FLAT_SHAPE, debugSuffix);
     return;
   }
 
-  // iOS 13+ requires an explicit user gesture to grant motion access.
-  if (typeof DeviceMotionEvent.requestPermission === "function") {
+  const angle = Math.atan2(smoothGamma, smoothBeta) * (180 / Math.PI); // -180..180
+  const sector = Math.floor(((angle + 180) / 360) * TILT_SHAPES.length) % TILT_SHAPES.length;
+  setShape(TILT_SHAPES[sector], debugSuffix);
+}
+
+function startOrientationListening() {
+  window.addEventListener("deviceorientation", handleOrientation);
+  setStatus("Listening for tilt…");
+}
+
+function initOrientation() {
+  if (typeof DeviceOrientationEvent === "undefined") {
+    setStatus("This device doesn't support orientation detection.");
+    return;
+  }
+
+  // iOS 13+ requires an explicit user gesture to grant sensor access.
+  if (typeof DeviceOrientationEvent.requestPermission === "function") {
     enableBtn.hidden = false;
-    setStatus("Tap the button to enable motion detection");
+    setStatus("Tap the button to enable orientation detection");
     enableBtn.addEventListener("click", async () => {
       try {
-        const result = await DeviceMotionEvent.requestPermission();
+        const result = await DeviceOrientationEvent.requestPermission();
         if (result === "granted") {
           enableBtn.hidden = true;
-          startMotionListening();
+          startOrientationListening();
         } else {
-          setStatus("Motion permission denied.");
+          setStatus("Orientation permission denied.");
         }
       } catch (err) {
-        setStatus("Could not request motion permission.");
+        setStatus("Could not request orientation permission.");
       }
     });
   } else {
-    startMotionListening();
+    startOrientationListening();
   }
 }
 
-initMotion();
+setShape(FLAT_SHAPE);
+initOrientation();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
