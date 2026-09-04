@@ -22,38 +22,66 @@ const SHAPES = [
   },
 ];
 
-// Shapes triggered by tilting the phone in a given direction. "circle" is
-// reserved for holding the phone flat/level.
+// Shapes triggered by tilting the phone in a given direction (default mode).
+// "circle" is reserved for holding the phone flat/level.
 const TILT_SHAPES = ["square", "triangle", "diamond", "pentagon", "hexagon", "star", "arrow"];
 const FLAT_SHAPE = "circle";
 
 const shapeEl = document.getElementById("shape");
+const infoTextEl = document.getElementById("info-text");
 const statusEl = document.getElementById("status");
 const enableBtn = document.getElementById("enable-motion");
+const modeButtons = document.querySelectorAll(".mode-btn");
 
 const shapesByName = Object.fromEntries(SHAPES.map((s) => [s.name, s]));
+
+let mode = "default"; // "info" | "default" | "ball"
 let currentShapeName = null;
-
-function setShape(name, statusSuffix) {
-  if (name === currentShapeName) return;
-  currentShapeName = name;
-
-  const shape = shapesByName[name];
-  shapeEl.style.clipPath = shape.clipPath;
-  shapeEl.classList.add("pulse");
-  setTimeout(() => shapeEl.classList.remove("pulse"), 200);
-  setStatus(`Shape: ${shape.name}${statusSuffix || ""}`);
-}
 
 function setStatus(text) {
   statusEl.textContent = text;
 }
+
+function applyShape(name) {
+  currentShapeName = name;
+  shapeEl.style.clipPath = shapesByName[name].clipPath;
+  shapeEl.classList.add("pulse");
+  setTimeout(() => shapeEl.classList.remove("pulse"), 200);
+}
+
+function setMode(nextMode) {
+  mode = nextMode;
+  currentShapeName = null;
+
+  modeButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === nextMode));
+
+  shapeEl.classList.remove("mode-info", "mode-ball");
+  shapeEl.style.left = "";
+  shapeEl.style.top = "";
+  infoTextEl.hidden = true;
+
+  if (nextMode === "info") {
+    shapeEl.classList.add("mode-info");
+    infoTextEl.hidden = false;
+    infoTextEl.textContent = "Flat";
+  } else if (nextMode === "ball") {
+    shapeEl.classList.add("mode-ball");
+    shapeEl.style.clipPath = shapesByName[FLAT_SHAPE].clipPath;
+  } else {
+    shapeEl.style.clipPath = shapesByName[FLAT_SHAPE].clipPath;
+  }
+}
+
+modeButtons.forEach((btn) => {
+  btn.addEventListener("click", () => setMode(btn.dataset.mode));
+});
 
 // --- orientation detection ---
 
 const FLAT_THRESHOLD = 15; // degrees of tilt below which we call it "flat"
 const FLAT_HYSTERESIS = 5; // extra margin to avoid flickering at the edge
 const UPDATE_INTERVAL_MS = 120;
+const BALL_RANGE_DEG = 45; // tilt needed to roll the ball fully to an edge
 
 // Smoothed readings, low-pass filtered to cut sensor jitter.
 let smoothBeta = 0;
@@ -61,6 +89,42 @@ let smoothGamma = 0;
 let hasReading = false;
 let isFlat = true;
 let lastUpdateAt = 0;
+
+function directionLabel(beta, gamma, magnitude) {
+  if (magnitude < FLAT_THRESHOLD) return "Flat";
+  const parts = [];
+  if (Math.abs(beta) > FLAT_THRESHOLD / 2) {
+    parts.push(beta > 0 ? "Tilted forward" : "Tilted back");
+  }
+  if (Math.abs(gamma) > FLAT_THRESHOLD / 2) {
+    parts.push(gamma > 0 ? "right" : "left");
+  }
+  return parts.join(", ") || "Flat";
+}
+
+function updateDefaultMode(magnitude, angle, debugSuffix) {
+  const name = isFlat
+    ? FLAT_SHAPE
+    : TILT_SHAPES[Math.floor(((angle + 180) / 360) * TILT_SHAPES.length) % TILT_SHAPES.length];
+
+  if (name !== currentShapeName) applyShape(name);
+  setStatus(`Shape: ${name}${debugSuffix}`);
+}
+
+function updateInfoMode(beta, gamma, magnitude, debugSuffix) {
+  infoTextEl.textContent = directionLabel(beta, gamma, magnitude);
+  setStatus(`Orientation${debugSuffix}`);
+}
+
+function updateBallMode(beta, gamma, debugSuffix) {
+  const clampedGamma = Math.max(-BALL_RANGE_DEG, Math.min(BALL_RANGE_DEG, gamma));
+  const clampedBeta = Math.max(-BALL_RANGE_DEG, Math.min(BALL_RANGE_DEG, beta));
+  const left = 50 + (clampedGamma / BALL_RANGE_DEG) * 40; // keep within 10%-90%
+  const top = 50 + (clampedBeta / BALL_RANGE_DEG) * 40;
+  shapeEl.style.left = `${left}%`;
+  shapeEl.style.top = `${top}%`;
+  setStatus(`Ball rolling${debugSuffix}`);
+}
 
 function handleOrientation(event) {
   const { beta, gamma } = event; // beta: front/back tilt, gamma: left/right tilt
@@ -90,14 +154,14 @@ function handleOrientation(event) {
     isFlat = true;
   }
 
-  if (isFlat) {
-    setShape(FLAT_SHAPE, debugSuffix);
-    return;
+  if (mode === "info") {
+    updateInfoMode(smoothBeta, smoothGamma, magnitude, debugSuffix);
+  } else if (mode === "ball") {
+    updateBallMode(smoothBeta, smoothGamma, debugSuffix);
+  } else {
+    const angle = Math.atan2(smoothGamma, smoothBeta) * (180 / Math.PI); // -180..180
+    updateDefaultMode(magnitude, angle, debugSuffix);
   }
-
-  const angle = Math.atan2(smoothGamma, smoothBeta) * (180 / Math.PI); // -180..180
-  const sector = Math.floor(((angle + 180) / 360) * TILT_SHAPES.length) % TILT_SHAPES.length;
-  setShape(TILT_SHAPES[sector], debugSuffix);
 }
 
 function startOrientationListening() {
@@ -133,7 +197,7 @@ function initOrientation() {
   }
 }
 
-setShape(FLAT_SHAPE);
+setMode("default");
 initOrientation();
 
 if ("serviceWorker" in navigator) {

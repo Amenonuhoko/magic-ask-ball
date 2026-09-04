@@ -19,33 +19,73 @@ body {
   color: var(--fg);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  min-height: 100%;
 }
 
 main {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 2rem;
   padding: 2rem;
+  padding-bottom: calc(2rem + 88px + env(safe-area-inset-bottom));
   text-align: center;
 }
 
-.shape {
+.stage {
+  position: relative;
   width: 55vmin;
   height: 55vmin;
   max-width: 320px;
   max-height: 320px;
+}
+
+.shape {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100%;
+  height: 100%;
+  transform: translate(-50%, -50%);
   background: linear-gradient(135deg, var(--accent), #ff5c9d);
+  clip-path: circle(50% at 50% 50%);
   transition: clip-path 0.5s cubic-bezier(0.65, 0, 0.35, 1),
     border-radius 0.5s cubic-bezier(0.65, 0, 0.35, 1),
-    transform 0.5s cubic-bezier(0.65, 0, 0.35, 1);
-  clip-path: circle(50% at 50% 50%);
+    width 0.3s ease, height 0.3s ease,
+    left 0.15s linear, top 0.15s linear;
 }
 
 .shape.pulse {
-  transform: scale(1.06);
+  transform: translate(-50%, -50%) scale(1.06);
+}
+
+.shape.mode-info {
+  clip-path: none;
+  border-radius: 24px;
+}
+
+.shape.mode-ball {
+  clip-path: circle(50% at 50% 50%);
+  width: 38%;
+  height: 38%;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.info-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 1rem;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
 .status {
@@ -62,4 +102,53 @@ main {
   padding: 0.75rem 1.5rem;
   font-size: 1rem;
   cursor: pointer;
+}
+
+.carousel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem;
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  background: linear-gradient(to top, var(--bg) 60%, transparent);
+}
+
+.mode-btn {
+  flex: 0 0 auto;
+  scroll-snap-align: center;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  padding: 0.65rem 1.25rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  opacity: 0.75;
+  transition: opacity 0.2s, border-color 0.2s, transform 0.2s;
+}
+
+.mode-btn:active {
+  transform: scale(0.96);
+}
+
+.mode-btn.active {
+  opacity: 1;
+  border-color: #fff;
+}
+
+.mode-btn.mode-1 {
+  background: #ff5c5c;
+}
+
+.mode-btn.mode-2 {
+  background: #7c5cff;
+}
+
+.mode-btn.mode-3 {
+  background: #2fc9a0;
 }

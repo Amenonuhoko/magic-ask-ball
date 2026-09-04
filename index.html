@@ -15,10 +15,18 @@
 </head>
 <body>
   <main>
-    <div id="shape" class="shape"></div>
+    <div id="stage" class="stage">
+      <div id="shape" class="shape"></div>
+      <p id="info-text" class="info-text" hidden></p>
+    </div>
     <p id="status" class="status">Tilt your phone to change the shape</p>
     <button id="enable-motion" class="enable-motion" hidden>Enable orientation</button>
   </main>
+  <nav id="mode-carousel" class="carousel">
+    <button class="mode-btn mode-1" data-mode="info" type="button">Orientation</button>
+    <button class="mode-btn mode-2 active" data-mode="default" type="button">Default</button>
+    <button class="mode-btn mode-3" data-mode="ball" type="button">Ball</button>
+  </nav>
   <script src="app.js"></script>
 </body>
 </html>
