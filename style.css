@@ -116,6 +116,14 @@ main {
   opacity: 0.6;
 }
 
+/* Explicit rather than relying on implicit `[hidden]` support for SVG <g>
+   elements, which isn't consistent across browsers (app.js already avoids
+   the related .hidden IDL-property gap by using setAttribute/removeAttribute
+   here instead of the JS property). */
+.status-icon[hidden] {
+  display: none;
+}
+
 .dice-answer {
   margin: 0;
   font-size: 1.4rem;
@@ -206,6 +214,14 @@ main {
   flex-direction: column;
   gap: 0.6rem;
   z-index: 10;
+}
+
+/* `display: flex` above has the same specificity as the browser's built-in
+   `[hidden] { display: none }` rule and would otherwise win by coming later
+   in the cascade, silently defeating the `hidden` attribute (and the JS
+   toggle that flips it) — this makes the override explicit instead. */
+.debug-panel[hidden] {
+  display: none;
 }
 
 .debug-live {
