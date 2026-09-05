@@ -816,6 +816,12 @@ function pauseAndReveal() {
   if (!diceMesh) return;
   rollState = null;
 
+  // A new reveal cycle starting outlives any fanfare held from a previous
+  // natural 1/20 -- otherwise a stale glow could linger and misleadingly
+  // suggest the CURRENT face is still critical after settling onto a
+  // different one.
+  viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
+
   // Recalibrate the "level" reference right now, not after the settle
   // animation finishes — the moment you pause is what defines the new
   // resting center, so the level light and escape-threshold fill both reset
@@ -945,6 +951,9 @@ function rollDice(peakRotationRate, betaRate, gammaRate) {
   rolling = true;
   diceAnswerEl.textContent = "Rolling…";
   statusIconPauseEl.setAttribute("hidden", "");
+  // A new roll outlives any fanfare held from the previous result -- see
+  // the same reasoning in pauseAndReveal().
+  viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
   escapeRingFillEl.setAttribute("height", "0");
   escapeRingFillEl.setAttribute("y", "100");
 
@@ -1070,10 +1079,11 @@ function updatePull() {
 // change. The CSS animations these classes trigger override .is-frozen/
 // .is-held's static stroke/filter for their duration regardless of
 // selector specificity, so this always takes visual precedence while it
-// plays, then hands back cleanly once the class is removed.
-const FANFARE_DURATION_MS = 1600;
-let fanfareTimeoutId = null;
-
+// plays. Deliberately NOT cleared by a timer: the CSS keyframes pulse a
+// few times and then (via `forwards` fill-mode) hold a sustained glow, and
+// that hold lasts for as long as the natural 1/20 stays the current
+// result -- only cleared where frozen is reset to false, i.e. the next
+// roll (rollDice) or reveal cycle (pauseAndReveal) starting.
 function triggerFanfare(kind) {
   viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
   // Force a reflow so re-adding the same class restarts its CSS animation
@@ -1081,12 +1091,6 @@ function triggerFanfare(kind) {
   // back) rather than being a no-op.
   void viewfinderEl.offsetWidth;
   viewfinderEl.classList.add(kind === "success" ? "is-critical-success" : "is-critical-fail");
-
-  if (fanfareTimeoutId) clearTimeout(fanfareTimeoutId);
-  fanfareTimeoutId = setTimeout(() => {
-    viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
-    fanfareTimeoutId = null;
-  }, FANFARE_DURATION_MS);
 }
 
 // Whether the result was revealed by the phone going still (rather than a

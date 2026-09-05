@@ -182,11 +182,15 @@ main {
    only for an actual held-and-shaken roll landing there, not an auto-pause
    settle. CSS animations override the static stroke/filter rules above for
    their duration regardless of selector specificity, so this naturally
-   takes over from .is-frozen/.is-held while it plays, then hands back once
-   the class is removed. Entirely within the viewfinder -- no new elements,
-   no die-position changes -- per request. */
+   takes over from .is-frozen/.is-held while it plays. A few quick pulses,
+   then `forwards` fill-mode HOLDS the last keyframe's glow indefinitely --
+   the class itself is never auto-cleared by a timer, only by the next
+   roll/reveal cycle starting (see rollDice()/pauseAndReveal() in app.js) --
+   so the effect stays held for as long as that natural 1/20 is the result
+   on screen, not just a brief flash. Entirely within the viewfinder -- no
+   new elements, no die-position changes -- per request. */
 @keyframes fanfare-success-bracket {
-  0%, 100% {
+  0% {
     stroke: rgba(212, 175, 55, 0.5);
     stroke-width: 1.5;
     filter: none;
@@ -196,14 +200,19 @@ main {
     stroke-width: 2.5;
     filter: drop-shadow(0 0 6px rgba(212, 175, 55, 1)) drop-shadow(0 0 18px rgba(212, 175, 55, 0.85));
   }
+  100% {
+    stroke: var(--gold);
+    stroke-width: 2;
+    filter: drop-shadow(0 0 4px rgba(212, 175, 55, 0.8)) drop-shadow(0 0 12px rgba(212, 175, 55, 0.5));
+  }
 }
 
 .viewfinder.is-critical-success .vf-bracket {
-  animation: fanfare-success-bracket 1.6s ease-in-out 1;
+  animation: fanfare-success-bracket 1.6s ease-in-out 1 forwards;
 }
 
 @keyframes fanfare-success-track {
-  0%, 100% {
+  0% {
     stroke: rgba(212, 175, 55, 0.08);
     stroke-width: 1.5;
   }
@@ -211,14 +220,18 @@ main {
     stroke: rgba(255, 244, 204, 0.95);
     stroke-width: 3;
   }
+  100% {
+    stroke: rgba(255, 244, 204, 0.5);
+    stroke-width: 2;
+  }
 }
 
 .viewfinder.is-critical-success .escape-ring-track {
-  animation: fanfare-success-track 1.6s ease-in-out 1;
+  animation: fanfare-success-track 1.6s ease-in-out 1 forwards;
 }
 
 @keyframes fanfare-fail-bracket {
-  0%, 100% {
+  0% {
     stroke: rgba(212, 175, 55, 0.5);
     stroke-width: 1.5;
     filter: none;
@@ -228,8 +241,16 @@ main {
     stroke-width: 2.5;
     filter: drop-shadow(0 0 5px rgba(255, 60, 60, 0.8));
   }
+  100% {
+    stroke: #ff6b6b;
+    stroke-width: 2;
+    filter: drop-shadow(0 0 4px rgba(255, 60, 60, 0.6));
+  }
 }
 
+/* No `forwards` here on purpose -- every keyframe already returns to 0, so
+   the shake is only ever active during its own 6 repeats and doesn't need
+   to hold a translateX offset afterward. */
 @keyframes fanfare-fail-shake {
   0%, 100% {
     transform: translateX(0);
@@ -243,11 +264,11 @@ main {
 }
 
 .viewfinder.is-critical-fail .vf-bracket {
-  animation: fanfare-fail-bracket 1.6s ease-in-out 1, fanfare-fail-shake 0.15s ease-in-out 6;
+  animation: fanfare-fail-bracket 1.6s ease-in-out 1 forwards, fanfare-fail-shake 0.15s ease-in-out 6;
 }
 
 @keyframes fanfare-fail-track {
-  0%, 100% {
+  0% {
     stroke: rgba(212, 175, 55, 0.08);
     stroke-width: 1.5;
   }
@@ -255,10 +276,14 @@ main {
     stroke: rgba(255, 77, 77, 0.85);
     stroke-width: 2.5;
   }
+  100% {
+    stroke: rgba(255, 107, 107, 0.45);
+    stroke-width: 2;
+  }
 }
 
 .viewfinder.is-critical-fail .escape-ring-track {
-  animation: fanfare-fail-track 1.6s ease-in-out 1;
+  animation: fanfare-fail-track 1.6s ease-in-out 1 forwards;
 }
 
 .escape-ring-track {
