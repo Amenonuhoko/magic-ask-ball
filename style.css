@@ -178,6 +178,89 @@ main {
   filter: drop-shadow(0 0 3px rgba(212, 175, 55, 0.85)) drop-shadow(0 0 9px rgba(212, 175, 55, 0.55));
 }
 
+/* Fanfare for a natural 1 or 20 (see triggerFanfare() in app.js) -- fires
+   only for an actual held-and-shaken roll landing there, not an auto-pause
+   settle. CSS animations override the static stroke/filter rules above for
+   their duration regardless of selector specificity, so this naturally
+   takes over from .is-frozen/.is-held while it plays, then hands back once
+   the class is removed. Entirely within the viewfinder -- no new elements,
+   no die-position changes -- per request. */
+@keyframes fanfare-success-bracket {
+  0%, 100% {
+    stroke: rgba(212, 175, 55, 0.5);
+    stroke-width: 1.5;
+    filter: none;
+  }
+  15%, 45%, 75% {
+    stroke: #fff4cc;
+    stroke-width: 2.5;
+    filter: drop-shadow(0 0 6px rgba(212, 175, 55, 1)) drop-shadow(0 0 18px rgba(212, 175, 55, 0.85));
+  }
+}
+
+.viewfinder.is-critical-success .vf-bracket {
+  animation: fanfare-success-bracket 1.6s ease-in-out 1;
+}
+
+@keyframes fanfare-success-track {
+  0%, 100% {
+    stroke: rgba(212, 175, 55, 0.08);
+    stroke-width: 1.5;
+  }
+  15%, 45%, 75% {
+    stroke: rgba(255, 244, 204, 0.95);
+    stroke-width: 3;
+  }
+}
+
+.viewfinder.is-critical-success .escape-ring-track {
+  animation: fanfare-success-track 1.6s ease-in-out 1;
+}
+
+@keyframes fanfare-fail-bracket {
+  0%, 100% {
+    stroke: rgba(212, 175, 55, 0.5);
+    stroke-width: 1.5;
+    filter: none;
+  }
+  10%, 30%, 50% {
+    stroke: #ff4d4d;
+    stroke-width: 2.5;
+    filter: drop-shadow(0 0 5px rgba(255, 60, 60, 0.8));
+  }
+}
+
+@keyframes fanfare-fail-shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-2px);
+  }
+  75% {
+    transform: translateX(2px);
+  }
+}
+
+.viewfinder.is-critical-fail .vf-bracket {
+  animation: fanfare-fail-bracket 1.6s ease-in-out 1, fanfare-fail-shake 0.15s ease-in-out 6;
+}
+
+@keyframes fanfare-fail-track {
+  0%, 100% {
+    stroke: rgba(212, 175, 55, 0.08);
+    stroke-width: 1.5;
+  }
+  10%, 30%, 50% {
+    stroke: rgba(255, 77, 77, 0.85);
+    stroke-width: 2.5;
+  }
+}
+
+.viewfinder.is-critical-fail .escape-ring-track {
+  animation: fanfare-fail-track 1.6s ease-in-out 1;
+}
+
 .escape-ring-track {
   fill: none;
   stroke: rgba(212, 175, 55, 0.08);

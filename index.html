@@ -49,14 +49,23 @@
       <canvas id="dice-canvas" class="dice-canvas"></canvas>
       <svg id="viewfinder" class="viewfinder" viewBox="0 0 100 100">
         <defs>
-          <!-- Donut/annulus, not a filled disc: two circles combined with
-               the even-odd rule cancel out the shared interior, leaving
-               only the ring between them clipped in. The resting-tilt
-               fill below then only ever shows as a ring hugging the die's
-               edge, never covering its face. -->
+          <!-- Donut/annulus, not a filled disc. IMPORTANT: this must be ONE
+               <path> with two subpaths (outer + inner circle) and
+               clip-rule="evenodd" on that single element — sibling shapes
+               inside a clipPath are always unioned by the SVG spec
+               regardless of each one's own clip-rule, so two separate
+               <circle> elements (even both marked evenodd) just produce
+               the outer disc with no hole at all. Verified by rendering
+               both forms and sampling actual pixels: two circles filled
+               everywhere out to r=47 with no hole; one path with two
+               subpaths genuinely leaves the center AND the far outside
+               unfilled, filling only the ring between r=37 and r=47. -->
           <clipPath id="escape-fill-clip">
-            <circle cx="50" cy="50" r="47" clip-rule="evenodd" />
-            <circle cx="50" cy="50" r="37" clip-rule="evenodd" />
+            <path
+              clip-rule="evenodd"
+              d="M 97 50 A 47 47 0 1 0 3 50 A 47 47 0 1 0 97 50 Z
+                 M 87 50 A 37 37 0 1 0 13 50 A 37 37 0 1 0 87 50 Z"
+            />
           </clipPath>
         </defs>
 

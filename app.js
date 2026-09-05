@@ -1052,19 +1052,53 @@ function updatePull() {
   diceMesh.position.set(pullState.dirX * pullState.distance * progress, pullState.dirY * pullState.distance * progress, 0);
 }
 
+// Fanfare for a natural 1 or 20 -- entirely through the viewfinder (corner
+// brackets flash/glow, the resting-tilt ring flashes along with them; a
+// fail also gets a brief shake), no new UI elements and no die-position
+// change. The CSS animations these classes trigger override .is-frozen/
+// .is-held's static stroke/filter for their duration regardless of
+// selector specificity, so this always takes visual precedence while it
+// plays, then hands back cleanly once the class is removed.
+const FANFARE_DURATION_MS = 1600;
+let fanfareTimeoutId = null;
+
+function triggerFanfare(kind) {
+  viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
+  // Force a reflow so re-adding the same class restarts its CSS animation
+  // from scratch if triggered twice in a row (e.g. two natural 20s back to
+  // back) rather than being a no-op.
+  void viewfinderEl.offsetWidth;
+  viewfinderEl.classList.add(kind === "success" ? "is-critical-success" : "is-critical-fail");
+
+  if (fanfareTimeoutId) clearTimeout(fanfareTimeoutId);
+  fanfareTimeoutId = setTimeout(() => {
+    viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
+    fanfareTimeoutId = null;
+  }, FANFARE_DURATION_MS);
+}
+
 // Whether the result was revealed by the phone going still (rather than a
 // held-and-shaken roll) is shown as an icon in the viewfinder — a pause
 // glyph — instead of text.
 function finishRoll(index, revealedByPause) {
   rolling = false;
+  const faceNumber = FACES[index].number;
   diceAnswerEl.textContent = FACES[index].phrase;
 
   if (revealedByPause) statusIconPauseEl.removeAttribute("hidden");
   else statusIconPauseEl.setAttribute("hidden", "");
 
+  // Only an actual rolled result can be a "natural 1" or "natural 20" --
+  // settling wherever the die happens to be facing when the phone goes
+  // still isn't a roll outcome, so it never triggers fanfare.
+  if (!revealedByPause && faceNumber === 20) triggerFanfare("success");
+  else if (!revealedByPause && faceNumber === 1) triggerFanfare("fail");
+
   if (navigator.vibrate) {
     try {
-      navigator.vibrate([30, 40, 30]);
+      if (!revealedByPause && faceNumber === 20) navigator.vibrate([40, 30, 40, 30, 90]);
+      else if (!revealedByPause && faceNumber === 1) navigator.vibrate([120, 60, 120]);
+      else navigator.vibrate([30, 40, 30]);
     } catch {
       // ignore
     }
