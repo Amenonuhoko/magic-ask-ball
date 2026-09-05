@@ -190,6 +190,19 @@
       replace guesses. Tap Record, shake a few times like you normally
       would, tap Stop, then Copy and paste the result into the chat.
     </div>
+    <div class="settings-divider"></div>
+    <div class="settings-section-label">Frame timing</div>
+    <div id="frame-live" class="debug-live">—</div>
+    <div class="debug-actions">
+      <button id="frame-record-btn" class="debug-btn" type="button">● Record</button>
+      <button id="frame-copy-btn" class="debug-btn" type="button" hidden>Copy data</button>
+    </div>
+    <div id="frame-summary" class="debug-summary">
+      Records real per-frame timing and rotation deltas while the die
+      animates, so jank or dropped frames show up as numbers instead of a
+      guess. Tap Record, roll a few times and let it idle-spin a bit, tap
+      Stop, then Copy and paste the result into the chat.
+    </div>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
   <script src="app.js"></script>

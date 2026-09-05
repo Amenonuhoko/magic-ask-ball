@@ -17,6 +17,10 @@ const debugLiveEl = document.getElementById("debug-live");
 const debugRecordBtn = document.getElementById("debug-record-btn");
 const debugCopyBtn = document.getElementById("debug-copy-btn");
 const debugSummaryEl = document.getElementById("debug-summary");
+const frameLiveEl = document.getElementById("frame-live");
+const frameRecordBtn = document.getElementById("frame-record-btn");
+const frameCopyBtn = document.getElementById("frame-copy-btn");
+const frameSummaryEl = document.getElementById("frame-summary");
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -474,6 +478,97 @@ debugCopyBtn.addEventListener("click", async () => {
     debugSummaryEl.textContent = "Copied to clipboard.";
   } catch {
     debugSummaryEl.textContent = payload;
+  }
+});
+
+// --- frame-timing recorder ---
+//
+// Same reasoning as the shake-calibration recorder above, aimed at the
+// die's animation instead of the shake gesture: captures real per-frame
+// timing and rotation data during a roll/idle-spin session so "is this
+// smooth" becomes a number to check (dropped-frame-sized gaps between
+// frames, per-frame rotation size) instead of an eyeballed guess. Stays
+// local until "Copy data" is tapped, same as the shake recorder.
+
+let frameRecording = false;
+let frameSamples = [];
+let frameRecordStartAt = 0;
+let prevRecordedQuat = null;
+
+function updateFrameLiveReadout(dt, angleDeltaDeg) {
+  if (settingsPanelEl.hidden) return;
+  const fps = dt > 0 ? 1 / dt : 0;
+  frameLiveEl.textContent = `fps: ${fps.toFixed(0)}\nΔ°/frame: ${angleDeltaDeg.toFixed(2)}`;
+}
+
+// A frame-to-frame gap much larger than even a slow-but-steady 30fps frame
+// (33ms) is a real stall/dropped frame, not just a low-but-consistent
+// frame rate -- this is the number that actually answers "was there jank".
+const FRAME_STALL_THRESHOLD_MS = 50;
+
+function recordFrameSample(now, dt, stateLabel) {
+  const angleDeltaDeg = prevRecordedQuat && diceMesh ? prevRecordedQuat.angleTo(diceMesh.quaternion) * (180 / Math.PI) : 0;
+  if (diceMesh) prevRecordedQuat = diceMesh.quaternion.clone();
+  const dtMs = dt * 1000;
+  frameSamples.push({
+    t: Math.round(now - frameRecordStartAt),
+    dtMs: Math.round(dtMs * 10) / 10,
+    state: stateLabel,
+    angleDeltaDeg: Math.round(angleDeltaDeg * 100) / 100,
+  });
+  updateFrameLiveReadout(dt, angleDeltaDeg);
+}
+
+function computeFrameSummary(samples) {
+  if (samples.length === 0) return "No samples recorded.";
+  const dts = samples.map((s) => s.dtMs);
+  const avgDt = dts.reduce((a, b) => a + b, 0) / dts.length;
+  const maxDt = Math.max(...dts);
+  const avgFps = avgDt > 0 ? 1000 / avgDt : 0;
+  const durationSec = (samples[samples.length - 1].t - samples[0].t) / 1000;
+  const stalls = samples.filter((s) => s.dtMs > FRAME_STALL_THRESHOLD_MS);
+  return (
+    `${samples.length} samples over ${durationSec.toFixed(1)}s\n` +
+    `avg fps: ${avgFps.toFixed(0)}, worst frame gap: ${maxDt.toFixed(0)}ms\n` +
+    `stalls (>${FRAME_STALL_THRESHOLD_MS}ms gap): ${stalls.length}`
+  );
+}
+
+function startFrameRecording() {
+  frameRecording = true;
+  frameSamples = [];
+  frameRecordStartAt = performance.now();
+  prevRecordedQuat = diceMesh ? diceMesh.quaternion.clone() : null;
+  frameRecordBtn.textContent = "■ Stop";
+  frameCopyBtn.hidden = true;
+  frameSummaryEl.textContent = "Recording… roll, tilt, and let it settle a few times, then tap Stop.";
+}
+
+function stopFrameRecording() {
+  frameRecording = false;
+  frameRecordBtn.textContent = "● Record";
+  frameCopyBtn.hidden = frameSamples.length === 0;
+  frameSummaryEl.textContent = computeFrameSummary(frameSamples);
+}
+
+frameRecordBtn.addEventListener("click", () => {
+  if (frameRecording) {
+    stopFrameRecording();
+  } else {
+    startFrameRecording();
+  }
+});
+
+frameCopyBtn.addEventListener("click", async () => {
+  const payload = JSON.stringify({
+    constants: { FRAME_STALL_THRESHOLD_MS },
+    samples: frameSamples,
+  });
+  try {
+    await navigator.clipboard.writeText(payload);
+    frameSummaryEl.textContent = "Copied to clipboard.";
+  } catch {
+    frameSummaryEl.textContent = payload;
   }
 });
 
@@ -1258,11 +1353,15 @@ function diceFrame(now) {
   // separate concept from the lock icon, which reflects pointerHeld).
   viewfinderEl.classList.toggle("is-frozen", frozen);
 
+  let frameStateLabel;
   if (rollState) {
+    frameStateLabel = rollState.phase === "spin" ? "roll-spin" : "roll-settle";
     updateRoll();
   } else if (settleState) {
+    frameStateLabel = "pause-settle";
     updateSettle();
   } else if (frozen) {
+    frameStateLabel = "frozen";
     updateFrozenFill();
   } else if (stillSinceAt !== null) {
     // A stillness attempt is in progress (see updatePauseDetection) --
@@ -1273,10 +1372,14 @@ function diceFrame(now) {
     // the one that was actually facing the camera when the phone first
     // went still, because idle spin runs off absolute tilt angle, not
     // motion, and keeps going even while the phone reads as "still".
+    frameStateLabel = "held-still";
   } else {
+    frameStateLabel = "idle";
     updateIdleSpin(dt);
   }
   updatePull();
+
+  if (frameRecording) recordFrameSample(now, dt, frameStateLabel);
 
   renderer.render(scene, camera);
 }
