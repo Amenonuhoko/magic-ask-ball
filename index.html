@@ -69,17 +69,6 @@
           </clipPath>
         </defs>
 
-        <!-- corner brackets: frame the die like a camera viewfinder, and
-             double as the lock indicator — dim grey by default (locked,
-             can't roll), gradually turning solid gold and glowing while
-             held down (armed to roll, see .is-held/pointerHeld in app.js),
-             a quieter gold while a result is revealed and frozen (see
-             .is-frozen). No separate icon. -->
-        <path class="vf-bracket" d="M 4 16 L 4 4 L 16 4" />
-        <path class="vf-bracket" d="M 84 4 L 96 4 L 96 16" />
-        <path class="vf-bracket" d="M 96 84 L 96 96 L 84 96" />
-        <path class="vf-bracket" d="M 16 96 L 4 96 L 4 84" />
-
         <!-- PREVIEW ONLY: "Bound Vessel" from the sigil concepts (see
              https://claude.ai/code/artifact/33c37e50-a122-48aa-8380-16731180c044),
              scaled 0.5x from its original 200x200 drawing into this
@@ -92,7 +81,12 @@
              (NE/SE/SW/NW) matching the original's N/S/E/W ticks -- added
              detail once the mark was scaled down, so it doesn't read as
              emptier at the smaller size. Only responds to the gold
-             (affirmative) glow -- see .sigil-bound-vessel in style.css. -->
+             (affirmative) glow -- see .sigil-bound-vessel in style.css.
+             Placed FIRST among the viewfinder's children (right after
+             <defs>, before the brackets/escape-ring/status-icon) so it
+             paints first and sits behind all of them -- SVG paint order
+             follows document order, so being earliest here is what makes
+             it the backmost layer within the viewfinder, not a z-index. -->
         <g class="sigil-preview sigil-bound-vessel">
           <circle cx="50" cy="50" r="45" stroke-dasharray="1 1.75" />
           <circle cx="50" cy="50" r="39" />
@@ -128,7 +122,8 @@
              Bound Vessel was (new = 50 + (old-100)*0.5). A separate <g> (not
              nested in Bound Vessel's) so it can carry its own glow: this is
              the ONLY one of the two that responds to the red (negative)
-             glow -- see .sigil-seed-ward in style.css. -->
+             glow -- see .sigil-seed-ward in style.css. Also placed before
+             the brackets, same reasoning as Bound Vessel above. -->
         <g class="sigil-preview sigil-seed-ward">
           <circle cx="50" cy="50" r="46" />
           <circle cx="50" cy="50" r="44" />
@@ -141,6 +136,17 @@
           <circle cx="59.5" cy="33.55" r="19" />
           <circle cx="50" cy="50" r="1" />
         </g>
+
+        <!-- corner brackets: frame the die like a camera viewfinder, and
+             double as the lock indicator — dim grey by default (locked,
+             can't roll), gradually turning solid gold and glowing while
+             held down (armed to roll, see .is-held/pointerHeld in app.js),
+             a quieter gold while a result is revealed and frozen (see
+             .is-frozen). No separate icon. -->
+        <path class="vf-bracket" d="M 4 16 L 4 4 L 16 4" />
+        <path class="vf-bracket" d="M 84 4 L 96 4 L 96 16" />
+        <path class="vf-bracket" d="M 96 84 L 96 96 L 84 96" />
+        <path class="vf-bracket" d="M 16 96 L 4 96 L 4 84" />
 
         <!-- very subtle readout of tilt since the die came to rest; fills
              vertically like a rising liquid level, but clipped to a donut
