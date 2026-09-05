@@ -179,41 +179,56 @@ main {
   filter: drop-shadow(0 0 3px rgba(212, 175, 55, 0.85)) drop-shadow(0 0 9px rgba(212, 175, 55, 0.55));
 }
 
-/* PREVIEW ONLY -- see the matching comment in index.html. Scaled way up and
-   let bleed past the frame (.viewfinder now overflow:visible) so it reads
-   as a large circle the die sits inside rather than a small badge on it.
-   Base opacity is kept faint so it stays a wash in the background rather
-   than a bold decoration; stroke-width is comparatively crisp (a small
-   blur only, not a heavy wash) so the linework itself still reads as
-   engraved detail up close. Now carries BOTH Bound Vessel and Seed Ward
-   in one <g>, so both glow/dim together.
-   Two independent glow channels, both set in app.js and both 0 by
-   default: --sigil-glow (gold) brightens for affirmative rolls, peaking
-   at a natural 20; --sigil-glow-red brightens for negative rolls, peaking
-   at a natural 1. Only one is ever non-zero for a given result. Both
-   ceilings are deliberately modest so even at 1 they stay a soft glow,
-   not a flare -- the louder fanfare effect on the brackets already owns
-   "big and bright", and the red channel especially is meant to stay
-   "very subtle" per its own request, dimmer than the gold one at its peak.
+/* PREVIEW ONLY -- see the matching comments in index.html. Scaled way up
+   and let bleed past the frame (.viewfinder now overflow:visible) so it
+   reads as a large circle the die sits inside rather than a small badge
+   on it. Base opacity is kept faint so it stays a wash in the background
+   rather than a bold decoration; stroke-width is comparatively crisp (a
+   small blur only, not a heavy wash) so the linework itself still reads
+   as engraved detail up close. Shared by two SEPARATE <g> elements --
+   Bound Vessel and Seed Ward -- each of which then picks its own glow
+   channel below, so a glow can brighten one mark without touching the
+   other (a shared filter on one combined <g> can't do that: a
+   drop-shadow always follows every shape inside the element it's applied
+   to).
    IMPORTANT: `transform: scale()` on this element visually magnifies its
    own `filter` radii along with everything else (a blur/drop-shadow is
    computed pre-transform, then scaled up with the rest) -- verified by
    screenshotting the shipped page at --sigil-glow:1 and seeing a bold,
    near-white ring instead of a soft aura from what looked like reasonable
-   drop-shadow numbers. The blur/drop-shadow constants below are sized for
-   the ~1.73x scale factor above so the ON-SCREEN glow stays subtle;
-   re-check with a screenshot if the scale value changes. */
+   drop-shadow numbers. The blur/drop-shadow constants in the two rules
+   below are sized for the ~1.73x scale factor above so the ON-SCREEN glow
+   stays subtle; re-check with a screenshot if the scale value changes. */
 .sigil-preview {
   fill: none;
   stroke: var(--gold);
   stroke-width: 0.4;
   transform: scale(1.73);
   transform-origin: 50% 50%;
-  opacity: calc(0.045 + var(--sigil-glow, 0) * 0.04 + var(--sigil-glow-red, 0) * 0.03);
-  filter: blur(0.06px)
-    drop-shadow(0 0 calc(0.4px + var(--sigil-glow, 0) * 1.1px) rgba(212, 175, 55, calc(0.14 + var(--sigil-glow, 0) * 0.22)))
-    drop-shadow(0 0 calc(0.4px + var(--sigil-glow-red, 0) * 0.9px) rgba(214, 70, 70, calc(0.1 + var(--sigil-glow-red, 0) * 0.16)));
   transition: opacity 1.2s ease, filter 1.2s ease;
+}
+
+/* --sigil-glow (set in app.js, 0 by default) brightens Bound Vessel for
+   affirmative rolls, peaking at a natural 20. The ceiling is deliberately
+   modest so even at --sigil-glow:1 it stays a soft glow, not a flare --
+   the louder fanfare effect on the brackets already owns "big and bright". */
+.sigil-bound-vessel {
+  opacity: calc(0.045 + var(--sigil-glow, 0) * 0.04);
+  filter: blur(0.06px)
+    drop-shadow(0 0 calc(0.4px + var(--sigil-glow, 0) * 1.1px) rgba(212, 175, 55, calc(0.14 + var(--sigil-glow, 0) * 0.22)));
+}
+
+/* --sigil-glow-red (set in app.js, 0 by default) brightens Seed Ward for
+   negative rolls, peaking at a natural 1 -- Bound Vessel never responds to
+   this variable, so the red glow only ever shows on the ward. Sized more
+   generously than the gold channel's terms (a bigger opacity/alpha/radius
+   ramp) so the effect actually reads at a glance, per feedback that the
+   first pass (when both marks shared one faint filter) was too faint to
+   notice. */
+.sigil-seed-ward {
+  opacity: calc(0.045 + var(--sigil-glow-red, 0) * 0.09);
+  filter: blur(0.06px)
+    drop-shadow(0 0 calc(0.5px + var(--sigil-glow-red, 0) * 1.7px) rgba(214, 70, 70, calc(0.14 + var(--sigil-glow-red, 0) * 0.38)));
 }
 
 /* Fanfare for a natural 1 or 20 (see triggerFanfare() in app.js) -- fires

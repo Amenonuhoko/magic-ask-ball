@@ -91,8 +91,9 @@
              octagon), a mid dashed ring at r=20, and 4 diagonal ticks
              (NE/SE/SW/NW) matching the original's N/S/E/W ticks -- added
              detail once the mark was scaled down, so it doesn't read as
-             emptier at the smaller size. -->
-        <g class="sigil-preview">
+             emptier at the smaller size. Only responds to the gold
+             (affirmative) glow -- see .sigil-bound-vessel in style.css. -->
+        <g class="sigil-preview sigil-bound-vessel">
           <circle cx="50" cy="50" r="45" stroke-dasharray="1 1.75" />
           <circle cx="50" cy="50" r="39" />
           <path d="M89,50 L77.6,77.6 L50,89 L22.4,77.6 L11,50 L22.4,22.4 L50,11 L77.6,22.4 Z" />
@@ -116,16 +117,19 @@
           <line x1="55.66" y1="55.66" x2="57.78" y2="57.78" />
           <line x1="44.34" y1="55.66" x2="42.22" y2="57.78" />
           <line x1="44.34" y1="44.34" x2="42.22" y2="42.22" />
+        </g>
 
-          <!-- "Seed Ward" (design #1 from the same moodboard), superimposed
-               on top of Bound Vessel rather than replacing it -- a classic
-               flower-of-life: 7 circles of equal radius, one centered and 6
-               placed around it at a distance equal to their own radius, in
-               a hexagonal ring, plus two outer boundary rings. Scaled 0.5x
-               from its original 200x200 drawing into this 0-100 space the
-               same way Bound Vessel was (new = 50 + (old-100)*0.5). Shares
-               this <g>'s stroke/opacity/glow, so it brightens and dims in
-               lockstep with Bound Vessel rather than needing its own rules. -->
+        <!-- "Seed Ward" (design #1 from the same moodboard), superimposed
+             alongside Bound Vessel rather than replacing it -- a classic
+             flower-of-life: 7 circles of equal radius, one centered and 6
+             placed around it at a distance equal to their own radius, in a
+             hexagonal ring, plus two outer boundary rings. Scaled 0.5x from
+             its original 200x200 drawing into this 0-100 space the same way
+             Bound Vessel was (new = 50 + (old-100)*0.5). A separate <g> (not
+             nested in Bound Vessel's) so it can carry its own glow: this is
+             the ONLY one of the two that responds to the red (negative)
+             glow -- see .sigil-seed-ward in style.css. -->
+        <g class="sigil-preview sigil-seed-ward">
           <circle cx="50" cy="50" r="46" />
           <circle cx="50" cy="50" r="44" />
           <circle cx="50" cy="50" r="19" />
