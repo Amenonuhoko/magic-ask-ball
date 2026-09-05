@@ -226,15 +226,26 @@ main {
 
 /* --sigil-glow-red (set in app.js, 0 by default) brightens Seed Ward for
    negative rolls, peaking at a natural 1 -- Bound Vessel never responds to
-   this variable, so the red glow only ever shows on the ward. Same
-   pixel-sampled recalibration as the gold channel above (previous real
-   on-screen shift was only ~11/255); sized a little stronger than gold's
-   since red is the less common existing hue in this scene and needs more
-   help standing out from the ambient warm light. */
+   this variable, so the red glow only ever shows on the ward.
+   A drop-shadow alone read as "warm/amber" rather than distinctly red: the
+   linework itself stayed gold, so only a faint red halo sat around
+   already-gold lines against the die's already-gold ambient light -- the
+   eye anchors on the crisp line color, not the soft shadow around it.
+   Fixed by also recoloring the STROKE itself from gold toward a saturated
+   red as --sigil-glow-red rises (0 = the shared gold at rest, matching
+   Bound Vessel; 1 = rgb(255,40,40)), so the mark's own lines turn red, not
+   just their glow. The drop-shadow color was moved to match the same red
+   endpoint for one consistent hue instead of two different reds. */
 .sigil-seed-ward {
+  stroke: rgb(
+    calc(212 + var(--sigil-glow-red, 0) * 43),
+    calc(175 - var(--sigil-glow-red, 0) * 135),
+    calc(55 - var(--sigil-glow-red, 0) * 15)
+  );
   opacity: calc(0.045 + var(--sigil-glow-red, 0) * 0.3);
   filter: blur(0.06px)
-    drop-shadow(0 0 calc(0.5px + var(--sigil-glow-red, 0) * 4px) rgba(214, 70, 70, calc(0.16 + var(--sigil-glow-red, 0) * 0.6)));
+    drop-shadow(0 0 calc(0.5px + var(--sigil-glow-red, 0) * 4px) rgba(255, 40, 40, calc(0.16 + var(--sigil-glow-red, 0) * 0.6)));
+  transition: opacity 1.2s ease, filter 1.2s ease, stroke 1.2s ease;
 }
 
 /* Fanfare for a natural 1 or 20 (see triggerFanfare() in app.js) -- fires
