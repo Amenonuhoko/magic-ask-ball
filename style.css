@@ -185,11 +185,16 @@ main {
    Base opacity is kept faint so it stays a wash in the background rather
    than a bold decoration; stroke-width is comparatively crisp (a small
    blur only, not a heavy wash) so the linework itself still reads as
-   engraved detail up close. --sigil-glow (set in app.js, 0 by default)
-   brightens it for affirmative rolls; the ceiling on both terms below is
-   deliberately modest so even at --sigil-glow:1 (a natural 20) it stays a
-   soft glow, not a flare -- the louder fanfare effect on the brackets
-   already owns "big and bright".
+   engraved detail up close. Now carries BOTH Bound Vessel and Seed Ward
+   in one <g>, so both glow/dim together.
+   Two independent glow channels, both set in app.js and both 0 by
+   default: --sigil-glow (gold) brightens for affirmative rolls, peaking
+   at a natural 20; --sigil-glow-red brightens for negative rolls, peaking
+   at a natural 1. Only one is ever non-zero for a given result. Both
+   ceilings are deliberately modest so even at 1 they stay a soft glow,
+   not a flare -- the louder fanfare effect on the brackets already owns
+   "big and bright", and the red channel especially is meant to stay
+   "very subtle" per its own request, dimmer than the gold one at its peak.
    IMPORTANT: `transform: scale()` on this element visually magnifies its
    own `filter` radii along with everything else (a blur/drop-shadow is
    computed pre-transform, then scaled up with the rest) -- verified by
@@ -204,9 +209,10 @@ main {
   stroke-width: 0.4;
   transform: scale(1.73);
   transform-origin: 50% 50%;
-  opacity: calc(0.045 + var(--sigil-glow, 0) * 0.04);
+  opacity: calc(0.045 + var(--sigil-glow, 0) * 0.04 + var(--sigil-glow-red, 0) * 0.03);
   filter: blur(0.06px)
-    drop-shadow(0 0 calc(0.4px + var(--sigil-glow, 0) * 1.1px) rgba(212, 175, 55, calc(0.14 + var(--sigil-glow, 0) * 0.22)));
+    drop-shadow(0 0 calc(0.4px + var(--sigil-glow, 0) * 1.1px) rgba(212, 175, 55, calc(0.14 + var(--sigil-glow, 0) * 0.22)))
+    drop-shadow(0 0 calc(0.4px + var(--sigil-glow-red, 0) * 0.9px) rgba(214, 70, 70, calc(0.1 + var(--sigil-glow-red, 0) * 0.16)));
   transition: opacity 1.2s ease, filter 1.2s ease;
 }
 

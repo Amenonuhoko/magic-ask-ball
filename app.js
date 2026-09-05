@@ -822,6 +822,7 @@ function pauseAndReveal() {
   // different one.
   viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
   viewfinderEl.style.setProperty("--sigil-glow", "0");
+  viewfinderEl.style.setProperty("--sigil-glow-red", "0");
 
   // Recalibrate the "level" reference right now, not after the settle
   // animation finishes — the moment you pause is what defines the new
@@ -956,6 +957,7 @@ function rollDice(peakRotationRate, betaRate, gammaRate) {
   // the same reasoning in pauseAndReveal().
   viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
   viewfinderEl.style.setProperty("--sigil-glow", "0");
+  viewfinderEl.style.setProperty("--sigil-glow-red", "0");
   escapeRingFillEl.setAttribute("height", "0");
   escapeRingFillEl.setAttribute("y", "100");
 
@@ -1105,6 +1107,16 @@ function affirmativeIntensity(faceNumber) {
   return (faceNumber - 12) / 8;
 }
 
+// Mirror of affirmativeIntensity() for the No/Maybe not bands (faces 1-8):
+// 0 for any face in Try again/Maybe yes/Yes (faces 9-20), then ramping
+// linearly up to 1 at face 1 (the single most emphatic "no"). Drives
+// --sigil-glow-red so the sigil preview gets a subtle red glow the more
+// negative the answer, never for a non-negative one.
+function negativeIntensity(faceNumber) {
+  if (faceNumber >= 9) return 0;
+  return (9 - faceNumber) / 8;
+}
+
 // Whether the result was revealed by the phone going still (rather than a
 // held-and-shaken roll) is shown as an icon in the viewfinder — a pause
 // glyph — instead of text.
@@ -1113,6 +1125,7 @@ function finishRoll(index, revealedByPause) {
   const faceNumber = FACES[index].number;
   diceAnswerEl.textContent = FACES[index].phrase;
   viewfinderEl.style.setProperty("--sigil-glow", String(affirmativeIntensity(faceNumber)));
+  viewfinderEl.style.setProperty("--sigil-glow-red", String(negativeIntensity(faceNumber)));
 
   if (revealedByPause) statusIconPauseEl.removeAttribute("hidden");
   else statusIconPauseEl.setAttribute("hidden", "");
