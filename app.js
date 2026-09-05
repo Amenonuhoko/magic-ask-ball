@@ -488,22 +488,23 @@ const GOLD_COLOR = "#d4af37";
 // flavor text. Yes and No are each their own internal gradient too,
 // matching FACE_PHRASE_ORDER below: index 0 (face 17, right at the
 // Maybe-yes border) is the plainest "Yes" and index 3 (face 20, the far
-// edge of the whole spread) is "Unequivocally yes"; index 4 (face 1, the
-// far edge) is "Unequivocally no" and index 7 (face 4, right at the
-// Maybe-not border) softens to a plain "No". So the strongest wording
-// always sits at the two extreme edges of the d20, easing toward plain/bare
-// as you approach the Maybe middle. The Maybe bands use the same
-// weakest-to-strongest confidence ladder (Leans/Likely/Probably/Almost
-// certainly) on both sides, mirrored, so "how sure" reads consistently
-// whichever direction it's leaning.
+// edge of the whole spread) is the single most grandiose verdict on the
+// die, "Resoundingly yes"; index 4 (face 1, the far edge) is its mirror,
+// "Resoundingly no", and index 7 (face 4, right at the Maybe-not border)
+// softens to a plain "No". So the strongest wording always sits at the two
+// extreme edges of the d20, easing toward plain/bare as you approach the
+// Maybe middle. The Maybe bands use the same weakest-to-strongest
+// confidence ladder (Leans/Likely/Probably/Almost certainly) on both
+// sides, mirrored, so "how sure" reads consistently whichever direction
+// it's leaning.
 const OUTCOME_PHRASES = [
-  // Yes: plain -> unequivocal
+  // Yes: plain -> most grandiose
   "Yes",
   "Clearly yes",
   "Strongly yes",
-  "Unequivocally yes",
-  // No: unequivocal -> plain
-  "Unequivocally no",
+  "Resoundingly yes",
+  // No: most grandiose -> plain
+  "Resoundingly no",
   "Strongly no",
   "Clearly no",
   "No",
@@ -1114,24 +1115,34 @@ function triggerFanfare(kind) {
   viewfinderEl.classList.add(kind === "success" ? "is-critical-success" : "is-critical-fail");
 }
 
+// Power curve applied to both intensity ramps below: a plain linear ramp
+// (faceNumber-12)/8 made faces 13-16 nearly as visible as 17-20, reading as
+// "already pretty bright" long before the actual extreme. Raising the
+// linear fraction to this power keeps early faces in each band close to 0
+// (barely visible) and concentrates the real jump to "big visible" in the
+// last couple of steps toward the edge -- e.g. face 16 (linear 0.5) lands
+// at just ~0.18, while face 20 (linear 1) is still exactly 1.
+const GLOW_CURVE_EXPONENT = 2.5;
+
 // 0 for any face in the No/Maybe not/Try again bands (faces 1-12), then
-// ramping linearly up to 1 at face 20 (the single most emphatic "yes")
-// across the Maybe yes/Yes bands (faces 13-20) -- see FACE_PHRASE_ORDER.
-// Drives --sigil-glow on the viewfinder so the sigil preview glows
-// brighter the more affirmative the answer, never for a non-affirmative one.
+// curving up to 1 at face 20 (the single most emphatic "yes") across the
+// Maybe yes/Yes bands (faces 13-20) -- see FACE_PHRASE_ORDER and
+// GLOW_CURVE_EXPONENT above. Drives --sigil-glow on the viewfinder so the
+// sigil preview glows brighter the more affirmative the answer, never for
+// a non-affirmative one.
 function affirmativeIntensity(faceNumber) {
   if (faceNumber <= 12) return 0;
-  return (faceNumber - 12) / 8;
+  return Math.pow((faceNumber - 12) / 8, GLOW_CURVE_EXPONENT);
 }
 
 // Mirror of affirmativeIntensity() for the No/Maybe not bands (faces 1-8):
-// 0 for any face in Try again/Maybe yes/Yes (faces 9-20), then ramping
-// linearly up to 1 at face 1 (the single most emphatic "no"). Drives
-// --sigil-glow-red so the sigil preview gets a subtle red glow the more
-// negative the answer, never for a non-negative one.
+// 0 for any face in Try again/Maybe yes/Yes (faces 9-20), then curving up
+// to 1 at face 1 (the single most emphatic "no"). Drives --sigil-glow-red
+// so the sigil preview gets a red glow the more negative the answer, never
+// for a non-negative one.
 function negativeIntensity(faceNumber) {
   if (faceNumber >= 9) return 0;
-  return (9 - faceNumber) / 8;
+  return Math.pow((9 - faceNumber) / 8, GLOW_CURVE_EXPONENT);
 }
 
 // Whether the result was revealed by the phone going still (rather than a
