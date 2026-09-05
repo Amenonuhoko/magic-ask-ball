@@ -122,12 +122,23 @@ let lastRollTriggerAt = 0;
 // the only way a reveal happens hands-free, and (along with a held-and-
 // shaken roll) the only way it happens at all now that a plain tap no
 // longer does. Requires genuine movement to have happened first, so it
-// can't fire the instant the page loads. Both bounds
-// are deliberately generous — natural hand tremor while holding a phone
-// "still" is well above 0°/s, and a real intentional pause is worth waiting
-// a beat to confirm, so this shouldn't fire on a brief mid-motion lull.
+// can't fire the instant the page loads. The speed bound is deliberately
+// generous — natural hand tremor while holding a phone "still" is well
+// above 0°/s.
+//
+// Settling into a lock naturally needs a minimum time, so the required
+// stillness duration is a soft 3s baseline rather than a hair-trigger --
+// but it also adapts: every time stillness is broken mid-attempt (you
+// started going still, then moved again before it confirmed), that's a
+// sign you're still fidgeting into position, so the bar for NEXT time
+// goes up by half a second, capped at 5s. A clean, decisive settle always
+// just needs the 3s baseline; only repeated false starts make it more
+// patient. Resets back to the baseline once a pause actually fires.
 const PAUSE_STILL_THRESHOLD_DEG_PER_SEC = 12; // minimum speed to still count as "moving"
-const PAUSE_DURATION_MS = 600; // minimum time held below that speed before it counts as a pause
+const PAUSE_DURATION_BASE_MS = 3000;
+const PAUSE_DURATION_STEP_MS = 500;
+const PAUSE_DURATION_MAX_MS = 5000;
+let pauseDurationMs = PAUSE_DURATION_BASE_MS;
 let stillSinceAt = null;
 let hasMovedSincePause = false;
 let prevPauseBeta = 0;
@@ -258,6 +269,11 @@ function updatePauseDetection(now, dt) {
   prevPauseGamma = filteredGamma;
 
   if (deviceSpeed > PAUSE_STILL_THRESHOLD_DEG_PER_SEC) {
+    if (stillSinceAt !== null) {
+      // Broke an in-progress stillness attempt before it confirmed — ask
+      // for a little more patience next time.
+      pauseDurationMs = Math.min(pauseDurationMs + PAUSE_DURATION_STEP_MS, PAUSE_DURATION_MAX_MS);
+    }
     stillSinceAt = null;
     hasMovedSincePause = true;
     return;
@@ -267,12 +283,20 @@ function updatePauseDetection(now, dt) {
 
   // !rolling && !settleState: a shake-triggered roll (or its own settle) is
   // already an active, deliberate action — the phone naturally goes still
-  // right after the shake that started it, well within PAUSE_DURATION_MS of
-  // the ~1.35s roll+settle animation, so without this guard auto-pause
-  // detection would hijack it mid-flight and substitute whatever face
-  // happens to be facing the camera at that instant for the real result.
-  if (hasMovedSincePause && !frozen && !rolling && !settleState && diceMesh && now - stillSinceAt > PAUSE_DURATION_MS) {
+  // right after the shake that started it, comfortably within
+  // pauseDurationMs (3-5s) of the ~1.35s roll+settle animation, so without
+  // this guard auto-pause detection would hijack it mid-flight and
+  // substitute whatever face happens to be facing the camera at that
+  // instant for the real result.
+  if (hasMovedSincePause && !frozen && !rolling && !settleState && diceMesh && now - stillSinceAt > pauseDurationMs) {
     hasMovedSincePause = false;
+    pauseDurationMs = PAUSE_DURATION_BASE_MS; // settled cleanly -- reset the patience meter
+    // Also clear stillSinceAt: otherwise the next movement (e.g. picking
+    // the phone back up right after seeing the result) would see a
+    // non-null stillSinceAt left over from THIS already-successful attempt
+    // and wrongly read it as "broke an in-progress attempt", escalating
+    // the duration for no reason.
+    stillSinceAt = null;
     pauseAndReveal();
   }
 }
