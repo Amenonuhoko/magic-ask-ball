@@ -7,6 +7,7 @@ const statusEl = document.getElementById("status");
 const enableBtn = document.getElementById("enable-motion");
 const recenterBtn = document.getElementById("recenter-btn");
 const viewfinderEl = document.getElementById("viewfinder");
+const sigilLayerEl = document.getElementById("sigil-layer");
 const levelLightEl = document.getElementById("level-light");
 const escapeRingFillEl = document.getElementById("escape-ring-fill");
 const statusIconPauseEl = document.getElementById("status-icon-pause");
@@ -839,8 +840,8 @@ function pauseAndReveal() {
   // suggest the CURRENT face is still critical after settling onto a
   // different one.
   viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
-  viewfinderEl.style.setProperty("--sigil-glow", "0");
-  viewfinderEl.style.setProperty("--sigil-glow-red", "0");
+  sigilLayerEl.style.setProperty("--sigil-glow", "0");
+  sigilLayerEl.style.setProperty("--sigil-glow-red", "0");
 
   // Recalibrate the "level" reference right now, not after the settle
   // animation finishes — the moment you pause is what defines the new
@@ -974,8 +975,8 @@ function rollDice(peakRotationRate, betaRate, gammaRate) {
   // A new roll outlives any fanfare held from the previous result -- see
   // the same reasoning in pauseAndReveal().
   viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
-  viewfinderEl.style.setProperty("--sigil-glow", "0");
-  viewfinderEl.style.setProperty("--sigil-glow-red", "0");
+  sigilLayerEl.style.setProperty("--sigil-glow", "0");
+  sigilLayerEl.style.setProperty("--sigil-glow-red", "0");
   escapeRingFillEl.setAttribute("height", "0");
   escapeRingFillEl.setAttribute("y", "100");
 
@@ -1152,8 +1153,8 @@ function finishRoll(index, revealedByPause) {
   rolling = false;
   const faceNumber = FACES[index].number;
   diceAnswerEl.textContent = FACES[index].phrase;
-  viewfinderEl.style.setProperty("--sigil-glow", String(affirmativeIntensity(faceNumber)));
-  viewfinderEl.style.setProperty("--sigil-glow-red", String(negativeIntensity(faceNumber)));
+  sigilLayerEl.style.setProperty("--sigil-glow", String(affirmativeIntensity(faceNumber)));
+  sigilLayerEl.style.setProperty("--sigil-glow-red", String(negativeIntensity(faceNumber)));
 
   if (revealedByPause) statusIconPauseEl.removeAttribute("hidden");
   else statusIconPauseEl.setAttribute("hidden", "");

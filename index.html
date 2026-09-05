@@ -22,6 +22,80 @@
 <body>
   <main>
     <div id="stage" class="stage">
+      <!-- Sigil preview, drawn BEHIND the die on purpose (same reasoning as
+           the level light and mist below it): both marks are centered on
+           and much bigger than the die, so without this they'd paint their
+           middle straight over the die's face -- covering the numeral --
+           since the whole #viewfinder svg they used to live in comes AFTER
+           dice-canvas in the DOM. Placed here, before dice-canvas, the
+           opaque die render naturally covers their center and only their
+           outer rings peek out past its silhouette, exactly like the level
+           light/mist already do. Shares one viewBox with the two "behind"
+           layers below for the same 0-100 coordinate convention as the
+           viewfinder. -->
+      <svg id="sigil-layer" class="sigil-layer" viewBox="0 0 100 100">
+        <!-- PREVIEW ONLY: "Bound Vessel" from the sigil concepts (see
+             https://claude.ai/code/artifact/33c37e50-a122-48aa-8380-16731180c044),
+             scaled 0.5x from its original 200x200 drawing into this
+             layer's 0-100 space and superimposed very faintly on the die.
+             Easy to remove or swap for a different concept once a
+             direction is picked. Beyond the original design: an octagon
+             connecting the 8 outer marker tips (each tip already sits
+             exactly on the r=39 ring, so it's an exact inscribed
+             octagon), a mid dashed ring at r=20, and 4 diagonal ticks
+             (NE/SE/SW/NW) matching the original's N/S/E/W ticks -- added
+             detail once the mark was scaled down, so it doesn't read as
+             emptier at the smaller size. Only responds to the gold
+             (affirmative) glow -- see .sigil-bound-vessel in style.css. -->
+        <g class="sigil-preview sigil-bound-vessel">
+          <circle cx="50" cy="50" r="45" stroke-dasharray="1 1.75" />
+          <circle cx="50" cy="50" r="39" />
+          <path d="M89,50 L77.6,77.6 L50,89 L22.4,77.6 L11,50 L22.4,22.4 L50,11 L77.6,22.4 Z" />
+          <circle cx="50" cy="50" r="32" />
+          <path d="M89,50 L85.5,52 L82,50 L85.5,48 Z" />
+          <path d="M77.6,77.6 L73.7,76.5 L72.6,72.6 L76.5,73.7 Z" />
+          <path d="M50,89 L48,85.5 L50,82 L52,85.5 Z" />
+          <path d="M22.4,77.6 L23.5,73.7 L27.4,72.6 L26.3,76.5 Z" />
+          <path d="M11,50 L14.5,48 L18,50 L14.5,52 Z" />
+          <path d="M22.4,22.4 L26.3,23.5 L27.4,27.4 L23.5,26.3 Z" />
+          <path d="M50,11 L52,14.5 L50,18 L48,14.5 Z" />
+          <path d="M77.6,22.4 L76.5,26.3 L72.6,27.4 L73.7,23.5 Z" />
+          <circle cx="50" cy="50" r="20" stroke-dasharray="0.6 1.2" />
+          <circle cx="50" cy="50" r="8" />
+          <circle cx="50" cy="50" r="2.5" />
+          <line x1="58" y1="50" x2="61" y2="50" />
+          <line x1="50" y1="58" x2="50" y2="61" />
+          <line x1="42" y1="50" x2="39" y2="50" />
+          <line x1="50" y1="42" x2="50" y2="39" />
+          <line x1="55.66" y1="44.34" x2="57.78" y2="42.22" />
+          <line x1="55.66" y1="55.66" x2="57.78" y2="57.78" />
+          <line x1="44.34" y1="55.66" x2="42.22" y2="57.78" />
+          <line x1="44.34" y1="44.34" x2="42.22" y2="42.22" />
+        </g>
+
+        <!-- "Seed Ward" (design #1 from the same moodboard), superimposed
+             alongside Bound Vessel rather than replacing it -- a classic
+             flower-of-life: 7 circles of equal radius, one centered and 6
+             placed around it at a distance equal to their own radius, in a
+             hexagonal ring, plus two outer boundary rings. Scaled 0.5x from
+             its original 200x200 drawing into this 0-100 space the same way
+             Bound Vessel was (new = 50 + (old-100)*0.5). A separate <g> (not
+             nested in Bound Vessel's) so it can carry its own glow: this is
+             the ONLY one of the two that responds to the red (negative)
+             glow -- see .sigil-seed-ward in style.css. -->
+        <g class="sigil-preview sigil-seed-ward">
+          <circle cx="50" cy="50" r="46" />
+          <circle cx="50" cy="50" r="44" />
+          <circle cx="50" cy="50" r="19" />
+          <circle cx="69" cy="50" r="19" />
+          <circle cx="59.5" cy="66.45" r="19" />
+          <circle cx="40.5" cy="66.45" r="19" />
+          <circle cx="31" cy="50" r="19" />
+          <circle cx="40.5" cy="33.55" r="19" />
+          <circle cx="59.5" cy="33.55" r="19" />
+          <circle cx="50" cy="50" r="1" />
+        </g>
+      </svg>
       <!-- Level indicator, drawn BEHIND the die on purpose: a soft glow
            roughly the die's own size, centered on it and only shifting a
            little with tilt, so at rest it's fully covered by the die and
@@ -68,74 +142,6 @@
             />
           </clipPath>
         </defs>
-
-        <!-- PREVIEW ONLY: "Bound Vessel" from the sigil concepts (see
-             https://claude.ai/code/artifact/33c37e50-a122-48aa-8380-16731180c044),
-             scaled 0.5x from its original 200x200 drawing into this
-             viewfinder's 0-100 space and superimposed very faintly on the
-             die. Easy to remove or swap for a different concept once a
-             direction is picked. Beyond the original design: an octagon
-             connecting the 8 outer marker tips (each tip already sits
-             exactly on the r=39 ring, so it's an exact inscribed
-             octagon), a mid dashed ring at r=20, and 4 diagonal ticks
-             (NE/SE/SW/NW) matching the original's N/S/E/W ticks -- added
-             detail once the mark was scaled down, so it doesn't read as
-             emptier at the smaller size. Only responds to the gold
-             (affirmative) glow -- see .sigil-bound-vessel in style.css.
-             Placed FIRST among the viewfinder's children (right after
-             <defs>, before the brackets/escape-ring/status-icon) so it
-             paints first and sits behind all of them -- SVG paint order
-             follows document order, so being earliest here is what makes
-             it the backmost layer within the viewfinder, not a z-index. -->
-        <g class="sigil-preview sigil-bound-vessel">
-          <circle cx="50" cy="50" r="45" stroke-dasharray="1 1.75" />
-          <circle cx="50" cy="50" r="39" />
-          <path d="M89,50 L77.6,77.6 L50,89 L22.4,77.6 L11,50 L22.4,22.4 L50,11 L77.6,22.4 Z" />
-          <circle cx="50" cy="50" r="32" />
-          <path d="M89,50 L85.5,52 L82,50 L85.5,48 Z" />
-          <path d="M77.6,77.6 L73.7,76.5 L72.6,72.6 L76.5,73.7 Z" />
-          <path d="M50,89 L48,85.5 L50,82 L52,85.5 Z" />
-          <path d="M22.4,77.6 L23.5,73.7 L27.4,72.6 L26.3,76.5 Z" />
-          <path d="M11,50 L14.5,48 L18,50 L14.5,52 Z" />
-          <path d="M22.4,22.4 L26.3,23.5 L27.4,27.4 L23.5,26.3 Z" />
-          <path d="M50,11 L52,14.5 L50,18 L48,14.5 Z" />
-          <path d="M77.6,22.4 L76.5,26.3 L72.6,27.4 L73.7,23.5 Z" />
-          <circle cx="50" cy="50" r="20" stroke-dasharray="0.6 1.2" />
-          <circle cx="50" cy="50" r="8" />
-          <circle cx="50" cy="50" r="2.5" />
-          <line x1="58" y1="50" x2="61" y2="50" />
-          <line x1="50" y1="58" x2="50" y2="61" />
-          <line x1="42" y1="50" x2="39" y2="50" />
-          <line x1="50" y1="42" x2="50" y2="39" />
-          <line x1="55.66" y1="44.34" x2="57.78" y2="42.22" />
-          <line x1="55.66" y1="55.66" x2="57.78" y2="57.78" />
-          <line x1="44.34" y1="55.66" x2="42.22" y2="57.78" />
-          <line x1="44.34" y1="44.34" x2="42.22" y2="42.22" />
-        </g>
-
-        <!-- "Seed Ward" (design #1 from the same moodboard), superimposed
-             alongside Bound Vessel rather than replacing it -- a classic
-             flower-of-life: 7 circles of equal radius, one centered and 6
-             placed around it at a distance equal to their own radius, in a
-             hexagonal ring, plus two outer boundary rings. Scaled 0.5x from
-             its original 200x200 drawing into this 0-100 space the same way
-             Bound Vessel was (new = 50 + (old-100)*0.5). A separate <g> (not
-             nested in Bound Vessel's) so it can carry its own glow: this is
-             the ONLY one of the two that responds to the red (negative)
-             glow -- see .sigil-seed-ward in style.css. Also placed before
-             the brackets, same reasoning as Bound Vessel above. -->
-        <g class="sigil-preview sigil-seed-ward">
-          <circle cx="50" cy="50" r="46" />
-          <circle cx="50" cy="50" r="44" />
-          <circle cx="50" cy="50" r="19" />
-          <circle cx="69" cy="50" r="19" />
-          <circle cx="59.5" cy="66.45" r="19" />
-          <circle cx="40.5" cy="66.45" r="19" />
-          <circle cx="31" cy="50" r="19" />
-          <circle cx="40.5" cy="33.55" r="19" />
-          <circle cx="59.5" cy="33.55" r="19" />
-          <circle cx="50" cy="50" r="1" />
-        </g>
 
         <!-- corner brackets: frame the die like a camera viewfinder, and
              double as the lock indicator — dim grey by default (locked,

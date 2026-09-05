@@ -54,6 +54,21 @@ main {
    stacking context) so the die's own opaque render occludes it — same
    inset/viewBox mapping as .dice-canvas so their coordinate spaces line up
    and the occlusion lands exactly where the die's silhouette actually is. */
+/* Same inset/size as .viewfinder (not .level-light-layer's plain 0-inset)
+   because the sigils are scaled way up and need room to bleed past the
+   die's own footprint; overflow:visible lets that bleed actually show
+   instead of clipping at the svg's own viewBox edge. Positioned before
+   dice-canvas in the DOM (see index.html) so the opaque die render covers
+   the sigils' center, same trick as .level-light-layer/.mist-layer below. */
+.sigil-layer {
+  position: absolute;
+  inset: -12px;
+  width: calc(100% + 24px);
+  height: calc(100% + 24px);
+  pointer-events: none;
+  overflow: visible;
+}
+
 .level-light-layer {
   position: absolute;
   inset: 0;
@@ -150,7 +165,6 @@ main {
   width: calc(100% + 24px);
   height: calc(100% + 24px);
   pointer-events: none;
-  overflow: visible;
 }
 
 .vf-bracket {
