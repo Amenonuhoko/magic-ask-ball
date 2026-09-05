@@ -150,6 +150,21 @@ let lastRollTriggerAt = 0;
 // goes up by half a second, capped at 5s. A clean, decisive settle always
 // just needs the 3s baseline; only repeated false starts make it more
 // patient. Resets back to the baseline once a pause actually fires.
+// Even once the PHONE's rotation rate is low enough to count as "not
+// moving" (the check above), idle spin might still be actively spinning
+// the DIE -- it's driven by absolute tilt, not motion, so holding the
+// phone rock-steady at any non-zero tilt keeps the die spinning
+// continuously. Freezing the die the instant the phone goes still (see
+// diceFrame()'s `stillSinceAt !== null` branch above) while it's still
+// mid-spin snaps it onto whatever face the ongoing spin happens to be
+// passing at that exact frame -- which can be a completely different face
+// than the one you were actually watching approach a moment earlier. So
+// "still enough to start the pause timer" also requires the die's own
+// tilt-driven spin (computed the same way updateIdleSpin() drives it) to
+// already be slow -- the tilt has to have relaxed back near level, the
+// same way a real object settles to rest, not just your hand holding
+// steady at a steep angle.
+const PAUSE_SPIN_THRESHOLD_DEG_PER_SEC = 20;
 const PAUSE_STILL_THRESHOLD_DEG_PER_SEC = 12; // minimum speed to still count as "moving"
 const PAUSE_DURATION_BASE_MS = 3000;
 const PAUSE_DURATION_STEP_MS = 500;
@@ -284,7 +299,10 @@ function updatePauseDetection(now, dt) {
   prevPauseBeta = filteredBeta;
   prevPauseGamma = filteredGamma;
 
-  if (deviceSpeed > PAUSE_STILL_THRESHOLD_DEG_PER_SEC) {
+  const { angVelX, angVelY } = tiltAngularVelocity(currentDeltaGamma, currentDeltaBeta);
+  const dieSpinSpeed = Math.hypot(angVelX, angVelY) * (180 / Math.PI); // rad/s -> deg/s
+
+  if (deviceSpeed > PAUSE_STILL_THRESHOLD_DEG_PER_SEC || dieSpinSpeed > PAUSE_SPIN_THRESHOLD_DEG_PER_SEC) {
     if (stillSinceAt !== null) {
       // Broke an in-progress stillness attempt before it confirmed — ask
       // for a little more patience next time.
@@ -894,16 +912,24 @@ window.addEventListener("resize", resizeDiceRenderer);
 const idleSpinScratchAxis = new THREE.Vector3();
 const idleSpinScratchQuat = new THREE.Quaternion();
 
+// Shared by updateIdleSpin() and updatePauseDetection(): the instantaneous
+// angular velocity idle spin would apply for a given held tilt. Pulled out
+// so pause-detection can ask "how fast is idle spin currently driving the
+// die" using the exact same formula the animation itself uses, rather than
+// a second guess that could drift out of sync with it.
+function tiltAngularVelocity(deltaGamma, deltaBeta) {
+  const clampedGamma = Math.max(-TILT_RANGE_DEG, Math.min(TILT_RANGE_DEG, deltaGamma));
+  const clampedBeta = Math.max(-TILT_RANGE_DEG, Math.min(TILT_RANGE_DEG, deltaBeta));
+  return {
+    angVelY: (clampedGamma / TILT_RANGE_DEG) * MAX_SPIN_SPEED, // left/right tilt -> spin around vertical axis
+    angVelX: (clampedBeta / TILT_RANGE_DEG) * MAX_SPIN_SPEED, // forward/back tilt -> spin around horizontal axis
+  };
+}
+
 function updateIdleSpin(dt) {
   if (rolling || !diceMesh) return;
 
-  const clampedGamma = Math.max(-TILT_RANGE_DEG, Math.min(TILT_RANGE_DEG, currentDeltaGamma));
-  const clampedBeta = Math.max(-TILT_RANGE_DEG, Math.min(TILT_RANGE_DEG, currentDeltaBeta));
-  const normGamma = clampedGamma / TILT_RANGE_DEG; // -1..1
-  const normBeta = clampedBeta / TILT_RANGE_DEG; // -1..1
-
-  const angVelY = normGamma * MAX_SPIN_SPEED; // left/right tilt -> spin around vertical axis
-  const angVelX = normBeta * MAX_SPIN_SPEED; // forward/back tilt -> spin around horizontal axis
+  const { angVelX, angVelY } = tiltAngularVelocity(currentDeltaGamma, currentDeltaBeta);
 
   // Angular velocities add as vectors (they're a derivative); finite
   // rotations don't (quaternion multiplication isn't commutative). This
