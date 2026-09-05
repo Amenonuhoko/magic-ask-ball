@@ -209,26 +209,32 @@ main {
 }
 
 /* --sigil-glow (set in app.js, 0 by default) brightens Bound Vessel for
-   affirmative rolls, peaking at a natural 20. The ceiling is deliberately
-   modest so even at --sigil-glow:1 it stays a soft glow, not a flare --
-   the louder fanfare effect on the brackets already owns "big and bright". */
+   affirmative rolls, peaking at a natural 20.
+   NOTE ON MAGNITUDE: the previous coefficients here (opacity +0.04, shadow
+   alpha +0.22) were verified correct at the CSS level but proved, via
+   actual pixel sampling of the rendered page, to shift the on-screen ring
+   color by only ~6/255 -- real but far too small to notice against a
+   phone screen, especially layered near the die's own already-gold
+   ambient light. These coefficients are sized to move that same sample
+   point by roughly 35-45/255 instead, confirmed with the same pixel-diff
+   method (see scratchpad sigil-pixel-diff*.js) rather than by eye alone. */
 .sigil-bound-vessel {
-  opacity: calc(0.045 + var(--sigil-glow, 0) * 0.04);
+  opacity: calc(0.045 + var(--sigil-glow, 0) * 0.22);
   filter: blur(0.06px)
-    drop-shadow(0 0 calc(0.4px + var(--sigil-glow, 0) * 1.1px) rgba(212, 175, 55, calc(0.14 + var(--sigil-glow, 0) * 0.22)));
+    drop-shadow(0 0 calc(0.4px + var(--sigil-glow, 0) * 3px) rgba(212, 175, 55, calc(0.14 + var(--sigil-glow, 0) * 0.5)));
 }
 
 /* --sigil-glow-red (set in app.js, 0 by default) brightens Seed Ward for
    negative rolls, peaking at a natural 1 -- Bound Vessel never responds to
-   this variable, so the red glow only ever shows on the ward. Sized more
-   generously than the gold channel's terms (a bigger opacity/alpha/radius
-   ramp) so the effect actually reads at a glance, per feedback that the
-   first pass (when both marks shared one faint filter) was too faint to
-   notice. */
+   this variable, so the red glow only ever shows on the ward. Same
+   pixel-sampled recalibration as the gold channel above (previous real
+   on-screen shift was only ~11/255); sized a little stronger than gold's
+   since red is the less common existing hue in this scene and needs more
+   help standing out from the ambient warm light. */
 .sigil-seed-ward {
-  opacity: calc(0.045 + var(--sigil-glow-red, 0) * 0.09);
+  opacity: calc(0.045 + var(--sigil-glow-red, 0) * 0.3);
   filter: blur(0.06px)
-    drop-shadow(0 0 calc(0.5px + var(--sigil-glow-red, 0) * 1.7px) rgba(214, 70, 70, calc(0.14 + var(--sigil-glow-red, 0) * 0.38)));
+    drop-shadow(0 0 calc(0.5px + var(--sigil-glow-red, 0) * 4px) rgba(214, 70, 70, calc(0.16 + var(--sigil-glow-red, 0) * 0.6)));
 }
 
 /* Fanfare for a natural 1 or 20 (see triggerFanfare() in app.js) -- fires
