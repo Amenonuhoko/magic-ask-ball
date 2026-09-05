@@ -1,4 +1,4 @@
-const CACHE_NAME = "ask-ball-v23";
+const CACHE_NAME = "ask-ball-v24";
 const APP_SHELL = [
   "./",
   "./index.html",

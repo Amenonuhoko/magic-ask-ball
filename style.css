@@ -182,69 +182,85 @@ main {
    only for an actual held-and-shaken roll landing there, not an auto-pause
    settle. CSS animations override the static stroke/filter rules above for
    their duration regardless of selector specificity, so this naturally
-   takes over from .is-frozen/.is-held while it plays. A few quick pulses,
-   then `forwards` fill-mode HOLDS the last keyframe's glow indefinitely --
-   the class itself is never auto-cleared by a timer, only by the next
-   roll/reveal cycle starting (see rollDice()/pauseAndReveal() in app.js) --
-   so the effect stays held for as long as that natural 1/20 is the result
-   on screen, not just a brief flash. Entirely within the viewfinder -- no
-   new elements, no die-position changes -- per request. */
-@keyframes fanfare-success-bracket {
+   takes over from .is-frozen/.is-held while it plays. The class itself is
+   never auto-cleared by a timer, only by the next roll/reveal cycle
+   starting (see rollDice()/pauseAndReveal() in app.js), so the effect
+   lasts for as long as that natural 1/20 is the result on screen.
+   Entirely within the viewfinder -- no new elements, no die-position
+   changes -- per request.
+
+   Two animations run together, on DIFFERENT properties so they never
+   fight each other:
+    - a "flash" ramps stroke/stroke-width up to their brightest point and
+      HOLDS there via `forwards` (its own 100% keyframe IS the brightest
+      value, not a dimmed-down "settled" one) -- the color snap.
+    - a "hum" runs forever (`infinite`) on `filter` alone, a slow breathing
+      glow that keeps the held state visibly alive rather than static. */
+@keyframes fanfare-success-flash {
   0% {
     stroke: rgba(212, 175, 55, 0.5);
     stroke-width: 1.5;
-    filter: none;
   }
-  15%, 45%, 75% {
+  15%, 45%, 75%, 100% {
     stroke: #fff4cc;
     stroke-width: 2.5;
-    filter: drop-shadow(0 0 6px rgba(212, 175, 55, 1)) drop-shadow(0 0 18px rgba(212, 175, 55, 0.85));
   }
-  100% {
-    stroke: var(--gold);
-    stroke-width: 2;
-    filter: drop-shadow(0 0 4px rgba(212, 175, 55, 0.8)) drop-shadow(0 0 12px rgba(212, 175, 55, 0.5));
+}
+
+@keyframes fanfare-success-hum {
+  0%, 100% {
+    filter: drop-shadow(0 0 6px rgba(212, 175, 55, 0.85)) drop-shadow(0 0 16px rgba(212, 175, 55, 0.55));
+  }
+  50% {
+    filter: drop-shadow(0 0 10px rgba(212, 175, 55, 1)) drop-shadow(0 0 28px rgba(212, 175, 55, 0.85));
   }
 }
 
 .viewfinder.is-critical-success .vf-bracket {
-  animation: fanfare-success-bracket 1.6s ease-in-out 1 forwards;
+  animation: fanfare-success-flash 1.6s ease-in-out 1 forwards, fanfare-success-hum 2.4s ease-in-out infinite;
 }
 
-@keyframes fanfare-success-track {
+@keyframes fanfare-success-track-flash {
   0% {
     stroke: rgba(212, 175, 55, 0.08);
     stroke-width: 1.5;
   }
-  15%, 45%, 75% {
+  15%, 45%, 75%, 100% {
     stroke: rgba(255, 244, 204, 0.95);
     stroke-width: 3;
   }
-  100% {
-    stroke: rgba(255, 244, 204, 0.5);
-    stroke-width: 2;
+}
+
+@keyframes fanfare-track-hum {
+  0%, 100% {
+    stroke-opacity: 0.7;
+  }
+  50% {
+    stroke-opacity: 1;
   }
 }
 
 .viewfinder.is-critical-success .escape-ring-track {
-  animation: fanfare-success-track 1.6s ease-in-out 1 forwards;
+  animation: fanfare-success-track-flash 1.6s ease-in-out 1 forwards, fanfare-track-hum 2.4s ease-in-out infinite;
 }
 
-@keyframes fanfare-fail-bracket {
+@keyframes fanfare-fail-flash {
   0% {
     stroke: rgba(212, 175, 55, 0.5);
     stroke-width: 1.5;
-    filter: none;
   }
-  10%, 30%, 50% {
+  10%, 30%, 50%, 100% {
     stroke: #ff4d4d;
     stroke-width: 2.5;
-    filter: drop-shadow(0 0 5px rgba(255, 60, 60, 0.8));
   }
-  100% {
-    stroke: #ff6b6b;
-    stroke-width: 2;
-    filter: drop-shadow(0 0 4px rgba(255, 60, 60, 0.6));
+}
+
+@keyframes fanfare-fail-hum {
+  0%, 100% {
+    filter: drop-shadow(0 0 5px rgba(255, 60, 60, 0.75));
+  }
+  50% {
+    filter: drop-shadow(0 0 10px rgba(255, 60, 60, 1));
   }
 }
 
@@ -264,26 +280,22 @@ main {
 }
 
 .viewfinder.is-critical-fail .vf-bracket {
-  animation: fanfare-fail-bracket 1.6s ease-in-out 1 forwards, fanfare-fail-shake 0.15s ease-in-out 6;
+  animation: fanfare-fail-flash 1.6s ease-in-out 1 forwards, fanfare-fail-hum 2s ease-in-out infinite, fanfare-fail-shake 0.15s ease-in-out 6;
 }
 
-@keyframes fanfare-fail-track {
+@keyframes fanfare-fail-track-flash {
   0% {
     stroke: rgba(212, 175, 55, 0.08);
     stroke-width: 1.5;
   }
-  10%, 30%, 50% {
+  10%, 30%, 50%, 100% {
     stroke: rgba(255, 77, 77, 0.85);
     stroke-width: 2.5;
-  }
-  100% {
-    stroke: rgba(255, 107, 107, 0.45);
-    stroke-width: 2;
   }
 }
 
 .viewfinder.is-critical-fail .escape-ring-track {
-  animation: fanfare-fail-track 1.6s ease-in-out 1 forwards;
+  animation: fanfare-fail-track-flash 1.6s ease-in-out 1 forwards, fanfare-track-hum 2s ease-in-out infinite;
 }
 
 .escape-ring-track {
