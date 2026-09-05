@@ -536,7 +536,7 @@ let rollState = null;
 let lastDiceFrameAt = null;
 
 const SPIN_DURATION_MS = 900;
-const SETTLE_DURATION_MS = 450;
+const SETTLE_DURATION_MS = 650; // softened: was 450, paired with a gentler easing curve below
 
 // Idle spin: same tilt-delta/range the ball used, applied as continuous
 // angular velocity instead of position — tilting "rolls" the die the same
@@ -564,6 +564,18 @@ function easeOutCubic(t) {
 
 function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+// Same ease-in/ease-out shape as easeInOutCubic but flatter at both ends
+// and steeper through the middle — starts and finishes even more gently.
+// Used for the roll's final settle onto the chosen face: the spin phase
+// right before it ends at essentially zero angular velocity (easeOutCubic
+// approaching t=1), so starting the settle at zero velocity too (rather
+// than a curve like easeOutQuart, which is fastest at its own t=0) avoids
+// a velocity discontinuity between the two phases — and the equally soft
+// tail means it drifts to rest at the end instead of stopping abruptly.
+function easeInOutQuart(t) {
+  return t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2;
 }
 
 function computeFaceNormals(geometry) {
@@ -983,7 +995,7 @@ function updateRoll() {
   }
 
   const t = Math.min((now - rollState.settleStartAt) / SETTLE_DURATION_MS, 1);
-  const eased = easeInOutCubic(t);
+  const eased = easeInOutQuart(t);
   diceMesh.quaternion.copy(rollState.settleFromQuat).slerp(rollState.finalQuat, eased);
 
   if (t >= 1) {
