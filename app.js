@@ -471,18 +471,25 @@ const OBSIDIAN_COLOR = "#08080b";
 const GOLD_COLOR = "#d4af37";
 
 // 20 unique phrases (4 per category: yes / no / leaning-yes / leaning-no /
-// inconclusive) — no two faces ever say the same thing.
+// inconclusive) — no two faces ever say the same thing. Yes and No are each
+// their own internal gradient too, matching FACE_PHRASE_ORDER below: index 0
+// (face 17, right at the Maybe-yes border) is the plainest "just yes" and
+// index 3 (face 20, the far edge of the whole spread) is the most
+// unequivocal; index 4 (face 1, the far edge) is the most unequivocal "no"
+// and index 7 (face 4, right at the Maybe-not border) softens to a plain
+// "just no". So the strongest wording always sits at the two extreme edges
+// of the d20, easing toward plain/bare as you approach the Maybe middle.
 const OUTCOME_PHRASES = [
-  // Yes
+  // Yes: plain -> unequivocal
+  "Just yes",
   "The stars align in your favor",
-  "Without a doubt",
   "Fate says yes",
-  "The omens are bright",
-  // No
-  "The shadows say no",
-  "Not a chance",
+  "Without a doubt",
+  // No: unequivocal -> plain
+  "Absolutely not",
   "The spirits decline",
-  "Firmly no",
+  "The shadows say no",
+  "Just no",
   // Maybe yes
   "Signs point to yes",
   "Likely, if you're patient",
