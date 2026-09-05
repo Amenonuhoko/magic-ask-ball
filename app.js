@@ -487,8 +487,8 @@ const OUTCOME_PHRASES = [
   "Without a doubt",
   // No: unequivocal -> plain
   "Absolutely not",
-  "The spirits decline",
-  "The shadows say no",
+  "No, not this time",
+  "Not really",
   "Just no",
   // Maybe yes
   "Signs point to yes",
