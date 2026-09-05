@@ -71,6 +71,66 @@ main {
   fill: url(#level-light-gradient);
 }
 
+/* Drifting mist behind the die, same z-order trick as .level-light-layer:
+   sits before .dice-canvas in the DOM so the die's own render occludes it
+   at rest, enriching the space around/behind the die without ever
+   covering it up. Clipped to a circle so it never shows past the round
+   viewfinder frame into the square corners. Pure CSS (blurred, animated
+   radial gradients) rather than anything in the WebGL scene, so it costs
+   nothing on the render loop. */
+.mist-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.mist-blob {
+  position: absolute;
+  width: 65%;
+  height: 65%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(244, 244, 245, 0.1) 0%, rgba(244, 244, 245, 0) 70%);
+  filter: blur(18px);
+  animation: mist-drift 24s ease-in-out infinite;
+}
+
+.mist-blob-a {
+  top: 8%;
+  left: 2%;
+  animation-duration: 22s;
+}
+
+.mist-blob-b {
+  top: 38%;
+  left: 42%;
+  animation-duration: 30s;
+  animation-delay: -9s;
+  background: radial-gradient(circle, rgba(212, 175, 55, 0.09) 0%, rgba(212, 175, 55, 0) 70%);
+}
+
+.mist-blob-c {
+  top: 52%;
+  left: 4%;
+  animation-duration: 26s;
+  animation-delay: -15s;
+}
+
+@keyframes mist-drift {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(10%, -8%) scale(1.1);
+  }
+  66% {
+    transform: translate(-8%, 8%) scale(0.92);
+  }
+}
+
 .dice-canvas {
   position: absolute;
   inset: 0;
@@ -94,10 +154,11 @@ main {
 
 .vf-bracket {
   fill: none;
-  stroke: rgba(244, 244, 245, 0.14);
+  stroke: rgba(140, 140, 145, 0.16);
   stroke-width: 1.5;
   stroke-linecap: round;
-  transition: stroke 0.25s ease, stroke-width 0.15s ease;
+  filter: none;
+  transition: stroke 0.6s ease, stroke-width 0.4s ease, filter 0.6s ease;
 }
 
 /* Brackets turn gold when a result is revealed by the phone going still —
@@ -106,14 +167,15 @@ main {
   stroke: rgba(212, 175, 55, 0.5);
 }
 
-/* The lock indicator IS the brackets, not a separate icon: dim/thin above
-   is "locked" (shaking can't roll the die); holding the screen down snaps
-   them brighter and slightly bolder to say "armed — shake now to roll".
-   Declared after .is-frozen so it wins when both are true (holding is the
-   more time-critical, in-the-moment cue). */
+/* The lock indicator IS the brackets, not a separate icon: grey/dim above
+   is "locked" (shaking can't roll the die); holding the screen down
+   gradually turns them a solid gold and sets them glowing, to say "armed —
+   shake now to roll". Declared after .is-frozen so it wins when both are
+   true (holding is the more time-critical, in-the-moment cue). */
 .viewfinder.is-held .vf-bracket {
-  stroke: rgba(244, 244, 245, 0.85);
+  stroke: var(--gold);
   stroke-width: 2;
+  filter: drop-shadow(0 0 3px rgba(212, 175, 55, 0.85)) drop-shadow(0 0 9px rgba(212, 175, 55, 0.55));
 }
 
 .escape-ring-track {
@@ -141,8 +203,10 @@ main {
 
 .dice-answer {
   margin: 0;
+  margin-top: 5vh;
+  font-family: "Cinzel", Cambria, "Times New Roman", serif;
   font-size: 1.4rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.02em;
   color: var(--gold);
   text-shadow: 0 0 14px rgba(212, 175, 55, 0.45);

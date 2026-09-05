@@ -11,6 +11,12 @@
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&display=swap"
+    rel="stylesheet"
+  />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -32,26 +38,43 @@
         </defs>
         <circle id="level-light" cx="50" cy="50" r="40" class="level-light" />
       </svg>
+      <!-- Drifting mist, also BEHIND the die like the level light above —
+           same reasoning: it enriches the space around/behind the die
+           without ever covering it up. -->
+      <div class="mist-layer" aria-hidden="true">
+        <div class="mist-blob mist-blob-a"></div>
+        <div class="mist-blob mist-blob-b"></div>
+        <div class="mist-blob mist-blob-c"></div>
+      </div>
       <canvas id="dice-canvas" class="dice-canvas"></canvas>
       <svg id="viewfinder" class="viewfinder" viewBox="0 0 100 100">
         <defs>
+          <!-- Donut/annulus, not a filled disc: two circles combined with
+               the even-odd rule cancel out the shared interior, leaving
+               only the ring between them clipped in. The resting-tilt
+               fill below then only ever shows as a ring hugging the die's
+               edge, never covering its face. -->
           <clipPath id="escape-fill-clip">
-            <circle cx="50" cy="50" r="47" />
+            <circle cx="50" cy="50" r="47" clip-rule="evenodd" />
+            <circle cx="50" cy="50" r="37" clip-rule="evenodd" />
           </clipPath>
         </defs>
 
         <!-- corner brackets: frame the die like a camera viewfinder, and
-             double as the lock indicator — dim/thin by default (locked,
-             can't roll), brighter white while held down (armed to roll,
-             see .is-held/pointerHeld in app.js), gold while a result is
-             revealed and frozen (see .is-frozen). No separate icon. -->
+             double as the lock indicator — dim grey by default (locked,
+             can't roll), gradually turning solid gold and glowing while
+             held down (armed to roll, see .is-held/pointerHeld in app.js),
+             a quieter gold while a result is revealed and frozen (see
+             .is-frozen). No separate icon. -->
         <path class="vf-bracket" d="M 4 16 L 4 4 L 16 4" />
         <path class="vf-bracket" d="M 84 4 L 96 4 L 96 16" />
         <path class="vf-bracket" d="M 96 84 L 96 96 L 84 96" />
         <path class="vf-bracket" d="M 16 96 L 4 96 L 4 84" />
 
         <!-- very subtle readout of tilt since the die came to rest; fills
-             vertically, purely informational -->
+             vertically like a rising liquid level, but clipped to a donut
+             (see escape-fill-clip above) so it only ever forms a ring
+             hugging the die's edge, purely informational -->
         <circle cx="50" cy="50" r="47" class="escape-ring-track" />
         <rect id="escape-ring-fill" class="escape-ring-fill" x="0" y="100" width="100" height="0"
           clip-path="url(#escape-fill-clip)" />
