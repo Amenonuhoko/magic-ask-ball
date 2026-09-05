@@ -918,14 +918,68 @@ function setPointerHeld(held) {
   viewfinderEl.classList.toggle("is-held", held);
 }
 
+// Tap-and-drag: a second way to "shake" the die, alongside physically
+// shaking the phone, for anyone on a device without a working
+// gyroscope/orientation sensor (desktop, denied permission) or who just
+// prefers touch. Feeds the drag's own speed/direction into the EXACT same
+// handleMotionEvent() pipeline a real device shake uses -- same
+// accumulator, same instant-spike check, same redirect threshold, same
+// direction-driven spin axis -- rather than a separate roll path, so
+// dragging genuinely IS "shaking it" as far as the roll logic is
+// concerned, not a lookalike. Only produces samples while pointerHeld is
+// true (the same "armed to roll" gate a real shake already requires), so
+// a plain drag with nothing held down still can't roll the die.
+let dragLastX = null;
+let dragLastY = null;
+let dragLastT = null;
+// Screen-space px/s of drag speed -> synthetic deg/s of "rotation rate".
+// Tuned so a brisk flick (a few hundred px in ~100ms, i.e. a couple
+// thousand px/s) clears INSTANT_SPIKE_RATE_DEG_PER_SEC on its own, the
+// way a hard physical shake does, while a slow deliberate drag stays
+// under the accumulator's steady-state floor and needs genuine back-and-
+// forth dragging to build up, matching how a gentle real shake behaves.
+const DRAG_DEG_PER_PX_PER_SEC = 0.22;
+
 document.addEventListener("pointerdown", (event) => {
   if (isInteractiveElement(event.target)) return;
   event.preventDefault();
   setPointerHeld(true);
+  dragLastX = event.clientX;
+  dragLastY = event.clientY;
+  dragLastT = performance.now();
 });
 
-document.addEventListener("pointerup", () => setPointerHeld(false));
-document.addEventListener("pointercancel", () => setPointerHeld(false));
+document.addEventListener("pointerup", () => {
+  setPointerHeld(false);
+  dragLastX = null;
+  dragLastY = null;
+  dragLastT = null;
+});
+document.addEventListener("pointercancel", () => {
+  setPointerHeld(false);
+  dragLastX = null;
+  dragLastY = null;
+  dragLastT = null;
+});
+
+document.addEventListener("pointermove", (event) => {
+  if (!pointerHeld || dragLastX === null) return;
+  const now = performance.now();
+  const dt = Math.min((now - dragLastT) / 1000, 0.1); // clamp for irregular event gaps
+  const dx = event.clientX - dragLastX;
+  const dy = event.clientY - dragLastY;
+  dragLastX = event.clientX;
+  dragLastY = event.clientY;
+  dragLastT = now;
+  if (dt <= 0) return; // duplicate/zero-gap event; nothing to derive a rate from
+
+  // Horizontal drag -> gamma-like rate, vertical drag -> beta-like rate,
+  // matching the same axis convention idle spin already uses for tilt
+  // (normGamma = left/right, normBeta = up/down).
+  const gammaRate = (dx / dt) * DRAG_DEG_PER_PX_PER_SEC;
+  const betaRate = (dy / dt) * DRAG_DEG_PER_PX_PER_SEC;
+  handleMotionEvent({ rotationRate: { beta: betaRate, gamma: gammaRate } });
+});
 
 // A harder/faster shake spins the die faster: the peak rotation rate seen
 // while accumulating toward the trigger maps to how many full turns it
