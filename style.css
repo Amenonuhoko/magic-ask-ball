@@ -178,6 +178,16 @@ main {
   filter: drop-shadow(0 0 3px rgba(212, 175, 55, 0.85)) drop-shadow(0 0 9px rgba(212, 175, 55, 0.55));
 }
 
+/* PREVIEW ONLY -- see the matching comment in index.html. Deliberately
+   near-invisible: this is a first look at the idea, not a finished
+   opacity/weight pass. */
+.sigil-preview {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 0.4;
+  opacity: 0.08;
+}
+
 /* Fanfare for a natural 1 or 20 (see triggerFanfare() in app.js) -- fires
    only for an actual held-and-shaken roll landing there, not an auto-pause
    settle. CSS animations override the static stroke/filter rules above for

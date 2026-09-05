@@ -80,6 +80,32 @@
         <path class="vf-bracket" d="M 96 84 L 96 96 L 84 96" />
         <path class="vf-bracket" d="M 16 96 L 4 96 L 4 84" />
 
+        <!-- PREVIEW ONLY: "Bound Vessel" from the sigil concepts (see
+             https://claude.ai/code/artifact/33c37e50-a122-48aa-8380-16731180c044),
+             scaled 0.5x from its original 200x200 drawing into this
+             viewfinder's 0-100 space and superimposed very faintly on the
+             die. Easy to remove or swap for a different concept once a
+             direction is picked. -->
+        <g class="sigil-preview">
+          <circle cx="50" cy="50" r="45" stroke-dasharray="1 1.75" />
+          <circle cx="50" cy="50" r="39" />
+          <circle cx="50" cy="50" r="32" />
+          <path d="M89,50 L85.5,52 L82,50 L85.5,48 Z" />
+          <path d="M77.6,77.6 L73.7,76.5 L72.6,72.6 L76.5,73.7 Z" />
+          <path d="M50,89 L48,85.5 L50,82 L52,85.5 Z" />
+          <path d="M22.4,77.6 L23.5,73.7 L27.4,72.6 L26.3,76.5 Z" />
+          <path d="M11,50 L14.5,48 L18,50 L14.5,52 Z" />
+          <path d="M22.4,22.4 L26.3,23.5 L27.4,27.4 L23.5,26.3 Z" />
+          <path d="M50,11 L52,14.5 L50,18 L48,14.5 Z" />
+          <path d="M77.6,22.4 L76.5,26.3 L72.6,27.4 L73.7,23.5 Z" />
+          <circle cx="50" cy="50" r="8" />
+          <circle cx="50" cy="50" r="2.5" />
+          <line x1="58" y1="50" x2="61" y2="50" />
+          <line x1="50" y1="58" x2="50" y2="61" />
+          <line x1="42" y1="50" x2="39" y2="50" />
+          <line x1="50" y1="42" x2="50" y2="39" />
+        </g>
+
         <!-- very subtle readout of tilt since the die came to rest; fills
              vertically like a rising liquid level, but clipped to a donut
              (see escape-fill-clip above) so it only ever forms a ring
