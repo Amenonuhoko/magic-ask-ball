@@ -9,8 +9,6 @@ const recenterBtn = document.getElementById("recenter-btn");
 const viewfinderEl = document.getElementById("viewfinder");
 const levelLightEl = document.getElementById("level-light");
 const escapeRingFillEl = document.getElementById("escape-ring-fill");
-const lockIconLockedEl = document.getElementById("lock-icon-locked");
-const lockIconUnlockedEl = document.getElementById("lock-icon-unlocked");
 const statusIconPauseEl = document.getElementById("status-icon-pause");
 const debugToggleBtn = document.getElementById("debug-toggle");
 const debugPanelEl = document.getElementById("debug-panel");
@@ -780,8 +778,9 @@ function updateSettle() {
 // for actual buttons — clicks on those should behave normally and not also
 // arm the roll gate. Holding down doesn't reveal or move the die by
 // itself; it only determines whether a shake that happens while held can
-// actually roll it (see handleMotionEvent) — reflected live by the lock
-// icon in the viewfinder.
+// actually roll it (see handleMotionEvent) — reflected live by the
+// viewfinder's corner brackets (see .is-held in style.css), which double
+// as the lock indicator rather than a separate icon.
 function isInteractiveElement(target) {
   return target.closest("button, a, input, select, textarea") !== null;
 }
@@ -791,13 +790,7 @@ let pointerHeld = false;
 function setPointerHeld(held) {
   if (pointerHeld === held) return;
   pointerHeld = held;
-  if (held) {
-    lockIconLockedEl.setAttribute("hidden", "");
-    lockIconUnlockedEl.removeAttribute("hidden");
-  } else {
-    lockIconUnlockedEl.setAttribute("hidden", "");
-    lockIconLockedEl.removeAttribute("hidden");
-  }
+  viewfinderEl.classList.toggle("is-held", held);
 }
 
 document.addEventListener("pointerdown", (event) => {

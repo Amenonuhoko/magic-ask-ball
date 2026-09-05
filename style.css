@@ -44,10 +44,10 @@ main {
 
 .stage {
   position: relative;
-  width: 55vmin;
-  height: 55vmin;
-  max-width: 320px;
-  max-height: 320px;
+  width: 70vmin;
+  height: 70vmin;
+  max-width: 400px;
+  max-height: 400px;
 }
 
 /* Sits BEHIND the die on purpose (before .dice-canvas in the DOM, same
@@ -94,16 +94,26 @@ main {
 
 .vf-bracket {
   fill: none;
-  stroke: rgba(244, 244, 245, 0.3);
+  stroke: rgba(244, 244, 245, 0.14);
   stroke-width: 1.5;
   stroke-linecap: round;
-  transition: stroke 0.25s ease;
+  transition: stroke 0.25s ease, stroke-width 0.15s ease;
 }
 
 /* Brackets turn gold when a result is revealed by the phone going still —
    a "focus confirmed" cue instead of a text label. */
 .viewfinder.is-frozen .vf-bracket {
-  stroke: rgba(212, 175, 55, 0.65);
+  stroke: rgba(212, 175, 55, 0.5);
+}
+
+/* The lock indicator IS the brackets, not a separate icon: dim/thin above
+   is "locked" (shaking can't roll the die); holding the screen down snaps
+   them brighter and slightly bolder to say "armed — shake now to roll".
+   Declared after .is-frozen so it wins when both are true (holding is the
+   more time-critical, in-the-moment cue). */
+.viewfinder.is-held .vf-bracket {
+  stroke: rgba(244, 244, 245, 0.85);
+  stroke-width: 2;
 }
 
 .escape-ring-track {
@@ -117,25 +127,8 @@ main {
   opacity: 0.1;
 }
 
-.lock-icon {
-  opacity: 0.45;
-}
-
-/* Explicit rather than relying on implicit `[hidden]` support for SVG <g>
-   elements, which isn't consistent across browsers. */
-.lock-icon[hidden] {
-  display: none;
-}
-
 .vf-icon-fill {
   fill: var(--gold);
-}
-
-.vf-icon-ring {
-  fill: none;
-  stroke: var(--gold);
-  stroke-width: 1.5;
-  opacity: 0.6;
 }
 
 /* Explicit rather than relying on implicit `[hidden]` support for SVG <g>
