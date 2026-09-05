@@ -150,6 +150,7 @@ main {
   width: calc(100% + 24px);
   height: calc(100% + 24px);
   pointer-events: none;
+  overflow: visible;
 }
 
 .vf-bracket {
@@ -178,14 +179,33 @@ main {
   filter: drop-shadow(0 0 3px rgba(212, 175, 55, 0.85)) drop-shadow(0 0 9px rgba(212, 175, 55, 0.55));
 }
 
-/* PREVIEW ONLY -- see the matching comment in index.html. Deliberately
-   near-invisible: this is a first look at the idea, not a finished
-   opacity/weight pass. */
+/* PREVIEW ONLY -- see the matching comment in index.html. Scaled way up and
+   let bleed past the frame (.viewfinder now overflow:visible) so it reads
+   as a large circle the die sits inside rather than a small badge on it.
+   Base opacity/stroke-width are kept faint and blurred so it stays a wash
+   in the background rather than crisp linework. --sigil-glow (set in
+   app.js, 0 by default) brightens it for affirmative rolls; the ceiling on
+   both terms below is deliberately modest so even at --sigil-glow:1 (a
+   natural 20) it stays a glow, not a flare -- the louder fanfare effect on
+   the brackets already owns "big and bright".
+   IMPORTANT: `transform: scale()` on this element visually magnifies its
+   own `filter` radii along with everything else (a blur/drop-shadow is
+   computed pre-transform, then scaled up with the rest) -- verified by
+   screenshotting the shipped page at --sigil-glow:1 and seeing a bold,
+   near-white ring instead of a soft aura from what looked like reasonable
+   drop-shadow numbers. The blur/drop-shadow constants below are divided
+   down by roughly the 2.6x scale factor so the ON-SCREEN glow stays
+   subtle; re-check with a screenshot if the scale value above changes. */
 .sigil-preview {
   fill: none;
   stroke: var(--gold);
-  stroke-width: 0.4;
-  opacity: 0.08;
+  stroke-width: 0.3;
+  transform: scale(2.6);
+  transform-origin: 50% 50%;
+  opacity: calc(0.045 + var(--sigil-glow, 0) * 0.06);
+  filter: blur(0.14px)
+    drop-shadow(0 0 calc(0.35px + var(--sigil-glow, 0) * 1.15px) rgba(212, 175, 55, calc(0.15 + var(--sigil-glow, 0) * 0.3)));
+  transition: opacity 1.2s ease, filter 1.2s ease;
 }
 
 /* Fanfare for a natural 1 or 20 (see triggerFanfare() in app.js) -- fires

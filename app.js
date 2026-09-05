@@ -821,6 +821,7 @@ function pauseAndReveal() {
   // suggest the CURRENT face is still critical after settling onto a
   // different one.
   viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
+  viewfinderEl.style.setProperty("--sigil-glow", "0");
 
   // Recalibrate the "level" reference right now, not after the settle
   // animation finishes — the moment you pause is what defines the new
@@ -954,6 +955,7 @@ function rollDice(peakRotationRate, betaRate, gammaRate) {
   // A new roll outlives any fanfare held from the previous result -- see
   // the same reasoning in pauseAndReveal().
   viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
+  viewfinderEl.style.setProperty("--sigil-glow", "0");
   escapeRingFillEl.setAttribute("height", "0");
   escapeRingFillEl.setAttribute("y", "100");
 
@@ -1093,6 +1095,16 @@ function triggerFanfare(kind) {
   viewfinderEl.classList.add(kind === "success" ? "is-critical-success" : "is-critical-fail");
 }
 
+// 0 for any face in the No/Maybe not/Try again bands (faces 1-12), then
+// ramping linearly up to 1 at face 20 (the single most emphatic "yes")
+// across the Maybe yes/Yes bands (faces 13-20) -- see FACE_PHRASE_ORDER.
+// Drives --sigil-glow on the viewfinder so the sigil preview glows
+// brighter the more affirmative the answer, never for a non-affirmative one.
+function affirmativeIntensity(faceNumber) {
+  if (faceNumber <= 12) return 0;
+  return (faceNumber - 12) / 8;
+}
+
 // Whether the result was revealed by the phone going still (rather than a
 // held-and-shaken roll) is shown as an icon in the viewfinder — a pause
 // glyph — instead of text.
@@ -1100,6 +1112,7 @@ function finishRoll(index, revealedByPause) {
   rolling = false;
   const faceNumber = FACES[index].number;
   diceAnswerEl.textContent = FACES[index].phrase;
+  viewfinderEl.style.setProperty("--sigil-glow", String(affirmativeIntensity(faceNumber)));
 
   if (revealedByPause) statusIconPauseEl.removeAttribute("hidden");
   else statusIconPauseEl.setAttribute("hidden", "");
