@@ -10,8 +10,8 @@ const viewfinderEl = document.getElementById("viewfinder");
 const levelLightEl = document.getElementById("level-light");
 const escapeRingFillEl = document.getElementById("escape-ring-fill");
 const statusIconPauseEl = document.getElementById("status-icon-pause");
-const debugToggleBtn = document.getElementById("debug-toggle");
-const debugPanelEl = document.getElementById("debug-panel");
+const settingsToggleBtn = document.getElementById("settings-toggle");
+const settingsPanelEl = document.getElementById("settings-panel");
 const debugLiveEl = document.getElementById("debug-live");
 const debugRecordBtn = document.getElementById("debug-record-btn");
 const debugCopyBtn = document.getElementById("debug-copy-btn");
@@ -364,7 +364,7 @@ let debugSamples = [];
 let debugRecordStartAt = 0;
 
 function updateDebugLiveReadout(rotSpeed, accum) {
-  if (debugPanelEl.hidden) return;
+  if (settingsPanelEl.hidden) return;
   debugLiveEl.textContent = `rate: ${rotSpeed.toFixed(0)} deg/s\naccum: ${accum.toFixed(0)} deg`;
 }
 
@@ -411,8 +411,8 @@ function stopDebugRecording() {
   debugSummaryEl.textContent = computeDebugSummary(debugSamples);
 }
 
-debugToggleBtn.addEventListener("click", () => {
-  debugPanelEl.hidden = !debugPanelEl.hidden;
+settingsToggleBtn.addEventListener("click", () => {
+  settingsPanelEl.hidden = !settingsPanelEl.hidden;
 });
 
 debugRecordBtn.addEventListener("click", () => {
@@ -497,6 +497,7 @@ let scene = null;
 let camera = null;
 let diceMesh = null;
 let faceNormals = null;
+let faceUpVectors = null;
 let diceRafId = null;
 
 let rolling = false;
@@ -552,6 +553,53 @@ function computeFaceNormals(geometry) {
     normals.push(cb.clone());
   }
   return normals;
+}
+
+// The "up" direction of each face's printed number, in local (object)
+// space — used to correct the die's twist around the camera axis once it
+// locks, so the number reads upright instead of landing at whatever angle
+// the settle happened to leave it at. Per the canonical UV triangle in
+// assignPerFaceUVs (vertex 0/1 = the base, vertex 2 = the apex, which maps
+// to the top of the printed texture), "up" points from the base's midpoint
+// toward the apex vertex. That vector already lies in the face's own
+// plane (all three points are face vertices), so orthogonalizing against
+// the normal below is just a numerical-safety normalization, not a real
+// correction.
+function computeFaceUpVectors(geometry, normals) {
+  const pos = geometry.attributes.position;
+  const ups = [];
+  const vA = new THREE.Vector3();
+  const vB = new THREE.Vector3();
+  const vC = new THREE.Vector3();
+  const base = new THREE.Vector3();
+  const up = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i += 3) {
+    const face = i / 3;
+    vA.fromBufferAttribute(pos, i);
+    vB.fromBufferAttribute(pos, i + 1);
+    vC.fromBufferAttribute(pos, i + 2);
+    base.addVectors(vA, vB).multiplyScalar(0.5);
+    up.subVectors(vC, base);
+    const normal = normals[face];
+    up.addScaledVector(normal, -up.dot(normal));
+    up.normalize();
+    ups.push(up.clone());
+  }
+  return ups;
+}
+
+// After aligning some local vector to the camera direction via alignQuat,
+// computes the additional twist AROUND that camera axis needed to make
+// localUp (once carried along by alignQuat) point toward screen-up —
+// i.e., the rotation that makes a locked face's number read upright
+// rather than sideways/upside-down. Applying the result on top of
+// alignQuat (as `twist.multiply(alignQuat)`) preserves the original
+// alignment exactly, since rotating a vector around itself leaves it
+// unchanged: cameraDir stays mapped to cameraDir.
+function uprightTwist(localUp, alignQuat, cameraDir) {
+  const worldUp = localUp.clone().applyQuaternion(alignQuat);
+  const angle = Math.PI / 2 - Math.atan2(worldUp.y, worldUp.x);
+  return new THREE.Quaternion().setFromAxisAngle(cameraDir, angle);
 }
 
 // Every face gets the SAME canonical UV triangle, paired with a texture
@@ -614,6 +662,7 @@ function initDiceScene() {
   geometry.clearGroups();
   for (let i = 0; i < 20; i++) geometry.addGroup(i * 3, 3, i);
   faceNormals = computeFaceNormals(geometry);
+  faceUpVectors = computeFaceUpVectors(geometry, faceNormals);
   assignPerFaceUVs(geometry);
 
   const materials = FACES.map(
@@ -746,7 +795,13 @@ function pauseAndReveal() {
   const currentQuat = diceMesh.quaternion.clone();
   const currentWorldNormal = targetNormalLocal.clone().applyQuaternion(currentQuat);
   const correctionQuat = new THREE.Quaternion().setFromUnitVectors(currentWorldNormal, cameraDir);
-  const finalQuat = correctionQuat.multiply(currentQuat);
+  const alignedQuat = correctionQuat.multiply(currentQuat);
+  // On top of that minimal correction, twist around the camera axis so the
+  // revealed number reads upright — locking always straightens the number,
+  // even though the face-alignment step above deliberately preserves
+  // whatever roll the die happened to have.
+  const twist = uprightTwist(faceUpVectors[nearestIndex], alignedQuat, cameraDir);
+  const finalQuat = twist.multiply(alignedQuat);
 
   settleState = {
     startAt: performance.now(),
@@ -857,8 +912,12 @@ function rollDice(peakRotationRate, betaRate, gammaRate) {
   const cameraDir = new THREE.Vector3(0, 0, 1);
   const targetNormal = faceNormals[resultIndex].clone().normalize();
   const settleQuat = new THREE.Quaternion().setFromUnitVectors(targetNormal, cameraDir);
-  const spinAroundCam = new THREE.Quaternion().setFromAxisAngle(cameraDir, Math.random() * Math.PI * 2);
-  const finalQuat = spinAroundCam.multiply(settleQuat);
+  // Twist around the camera axis to land the number upright, rather than
+  // the arbitrary/random angle this used to settle at — the spin animation
+  // itself still looks dynamic (driven by spinAxis/totalTurns below), only
+  // the final resting orientation is now fixed to always read upright.
+  const twist = uprightTwist(faceUpVectors[resultIndex], settleQuat, cameraDir);
+  const finalQuat = twist.multiply(settleQuat);
 
   rollState = {
     phase: "spin",

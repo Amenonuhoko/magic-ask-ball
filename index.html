@@ -69,9 +69,11 @@
     <p id="status" class="status">Loading…</p>
     <button id="enable-motion" class="enable-motion" hidden>Enable sensors</button>
   </main>
-  <button id="recenter-btn" class="recenter-btn" type="button" aria-label="Recenter" title="Recenter">⌖</button>
-  <button id="debug-toggle" class="debug-toggle" type="button">⚙</button>
-  <div id="debug-panel" class="debug-panel" hidden>
+  <button id="settings-toggle" class="settings-toggle" type="button" aria-label="Settings" title="Settings">⚙</button>
+  <div id="settings-panel" class="settings-panel" hidden>
+    <button id="recenter-btn" class="settings-btn settings-btn-primary" type="button">⌖ Recenter</button>
+    <div class="settings-divider"></div>
+    <div class="settings-section-label">Motion calibration</div>
     <div id="debug-live" class="debug-live">—</div>
     <div class="debug-actions">
       <button id="debug-record-btn" class="debug-btn" type="button">● Record</button>

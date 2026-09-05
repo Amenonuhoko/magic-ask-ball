@@ -38,7 +38,7 @@ main {
   justify-content: center;
   gap: 2rem;
   padding: 2rem;
-  padding-bottom: calc(2rem + 96px + env(safe-area-inset-bottom));
+  padding-bottom: calc(2rem + env(safe-area-inset-bottom));
   text-align: center;
 }
 
@@ -79,8 +79,8 @@ main {
 }
 
 /* Camera-viewfinder overlay on top of the die: corner brackets frame the
-   stage, a very subtle vertical fill shows tilt-since-rest, a lock icon
-   shows whether the die can be rolled right now, and a small icon (rather
+   stage AND double as the lock indicator (see .is-held below), a very
+   subtle vertical fill shows tilt-since-rest, and a small icon (rather
    than text) shows when the current result was revealed by the phone
    going still. Everything here is information that used to live in
    separate widgets, now co-located in one glanceable spot. */
@@ -124,7 +124,7 @@ main {
 
 .escape-ring-fill {
   fill: var(--gold);
-  opacity: 0.1;
+  opacity: 0.04;
 }
 
 .vf-icon-fill {
@@ -165,36 +165,9 @@ main {
   cursor: pointer;
 }
 
-/* Deliberately far from the die, at the very bottom of the screen, so it
-   can't be mistaken for part of the hold area. */
-.recenter-btn {
-  position: fixed;
-  left: 50%;
-  bottom: calc(1.25rem + env(safe-area-inset-bottom));
-  transform: translateX(-50%);
-  background: transparent;
-  color: var(--fg);
-  border: 1.5px solid rgba(244, 244, 245, 0.35);
-  border-radius: 999px;
-  width: 2.75rem;
-  height: 2.75rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.3rem;
-  line-height: 1;
-  opacity: 0.7;
-  cursor: pointer;
-}
-
-.recenter-btn:active {
-  opacity: 1;
-  transform: translateX(-50%) scale(0.96);
-}
-
-/* A quiet, out-of-the-way toggle for the motion-data recorder — not part
-   of the main experience, just a tool for calibrating the shake trigger. */
-.debug-toggle {
+/* A quiet, out-of-the-way toggle for the settings menu (recenter + the
+   motion-data recorder) — not part of the main experience. */
+.settings-toggle {
   position: fixed;
   top: calc(0.75rem + env(safe-area-inset-top));
   right: 0.75rem;
@@ -210,11 +183,11 @@ main {
   cursor: pointer;
 }
 
-.debug-toggle:active {
+.settings-toggle:active {
   opacity: 0.8;
 }
 
-.debug-panel {
+.settings-panel {
   position: fixed;
   top: calc(3rem + env(safe-area-inset-top));
   right: 0.75rem;
@@ -235,8 +208,43 @@ main {
    `[hidden] { display: none }` rule and would otherwise win by coming later
    in the cascade, silently defeating the `hidden` attribute (and the JS
    toggle that flips it) — this makes the override explicit instead. */
-.debug-panel[hidden] {
+.settings-panel[hidden] {
   display: none;
+}
+
+.settings-btn {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid rgba(244, 244, 245, 0.3);
+  border-radius: 8px;
+  padding: 0.55rem 0.8rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-btn:active {
+  opacity: 0.7;
+}
+
+/* The one action most likely to actually get tapped, so it stands out from
+   the calibration tools underneath. */
+.settings-btn-primary {
+  border-color: rgba(212, 175, 55, 0.4);
+  color: var(--gold);
+}
+
+.settings-divider {
+  height: 1px;
+  background: rgba(244, 244, 245, 0.12);
+  margin: 0.15rem 0;
+}
+
+.settings-section-label {
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.5;
 }
 
 .debug-live {
