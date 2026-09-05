@@ -632,9 +632,37 @@ const FACE_PHRASE_ORDER = [
   0, 1, 2, 3, // 17-20: Yes
 ];
 
-const FACES = FACE_PHRASE_ORDER.map((phraseIndex, i) => ({
-  number: i + 1,
-  phrase: OUTCOME_PHRASES[phraseIndex],
+// Which physical triangle (by index -- matching faceNormals/materials/
+// geometry group order) shows which printed number. A real d20 puts 1 and
+// 20 on opposite faces on purpose, so the two most extreme outcomes are as
+// far apart as possible; THREE.IcosahedronGeometry's own triangle order
+// has no such consideration. Left as "number: i + 1", measuring the real
+// geometry shows the fallout: two GEOMETRICALLY ADJACENT faces could carry
+// numbers up to 14 apart (e.g. faces 17 and 20, both "Yes" outcomes, end
+// up 138.19deg apart -- nearly opposite -- while faces 12 and 13, meant to
+// feel different, are the closest possible pair at 41.81deg). A die nudged
+// just off one face onto a geometric neighbor could land on a face that
+// feels totally different, not similar.
+//
+// Fixed by treating this as a graph-bandwidth-minimization problem: every
+// face borders exactly 3 others (the adjacency graph is 3-regular), and we
+// want every one of those ~30 edges to connect two numbers that are close
+// together, not just consecutive numbers along one path. A breadth-first
+// layering from a fixed starting face (Cuthill-McKee-style: number each
+// face in the order a BFS from one face visits it) keeps geometric
+// neighbors numerically close throughout, cutting the worst-case gap
+// across ANY adjacent pair from 14 down to 6 -- and, as a bonus of the
+// graph's symmetry, still lands faces 1 and 20 on exact geometric
+// opposites (180deg apart), same as a real d20. Computed once offline
+// against the real geometry (see test-face-numbering.js for the
+// derivation and proof); this is just the resulting permutation.
+const TRIANGLE_TO_FACE_NUMBER = [
+  1, 2, 5, 7, 3, 6, 4, 8, 13, 11, 15, 16, 19, 20, 18, 9, 10, 14, 17, 12,
+];
+
+const FACES = TRIANGLE_TO_FACE_NUMBER.map((number) => ({
+  number,
+  phrase: OUTCOME_PHRASES[FACE_PHRASE_ORDER[number - 1]],
 }));
 
 let renderer = null;
