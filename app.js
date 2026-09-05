@@ -115,16 +115,27 @@ let lastMotionEventAt = null;
 const SHAKE_RETRIGGER_COOLDOWN_MS = 150;
 let lastRollTriggerAt = 0;
 
-// Auto pause-detection: whenever the phone's own physical motion (not the
-// die's spin state, which is driven by held tilt angle rather than actual
-// movement) stays below a small angular-speed threshold for a sustained
-// stretch, that counts as a "pause" and reveals the current face — this is
-// the only way a reveal happens hands-free, and (along with a held-and-
-// shaken roll) the only way it happens at all now that a plain tap no
-// longer does. Requires genuine movement to have happened first, so it
-// can't fire the instant the page loads. The speed bound is deliberately
-// generous — natural hand tremor while holding a phone "still" is well
-// above 0°/s.
+// Auto pause-detection: whenever the phone's own physical motion stays
+// below a small angular-speed threshold for a sustained stretch, that
+// counts as a "pause" and reveals the current face — this is the only way
+// a reveal happens hands-free, and (along with a held-and-shaken roll) the
+// only way it happens at all now that a plain tap no longer does. Requires
+// genuine movement to have happened first, so it can't fire the instant
+// the page loads. The speed bound is deliberately generous — natural hand
+// tremor while holding a phone "still" is well above 0°/s.
+//
+// IMPORTANT: the die's own idle spin is suspended the MOMENT a stillness
+// attempt begins (see diceFrame()'s `stillSinceAt !== null` branch), not
+// just once the full duration below confirms it. Idle spin is driven by
+// absolute tilt angle, not motion, so without this, holding the phone at
+// any non-zero tilt (i.e., almost always, unless perfectly flat or
+// recentered right there) would keep the die slowly rotating for the
+// entire 3-5s confirmation window even though the PHONE read as "still"
+// the whole time — meaning whichever face happened to be facing the
+// camera at the instant the timer finally fired could be a different one
+// than whatever was showing when the hold actually began, revealing a
+// phrase that doesn't match the number you thought you'd settled on. This
+// was a real, verified bug (see test-pause-face-lock.js), not a rare race.
 //
 // Settling into a lock naturally needs a minimum time, so the required
 // stillness duration is a soft 3s baseline rather than a hair-trigger --
@@ -471,40 +482,46 @@ const OBSIDIAN_COLOR = "#08080b";
 const GOLD_COLOR = "#d4af37";
 
 // 20 unique phrases (4 per category: yes / no / leaning-yes / leaning-no /
-// inconclusive) — no two faces ever say the same thing. Yes and No are each
-// their own internal gradient too, matching FACE_PHRASE_ORDER below: index 0
-// (face 17, right at the Maybe-yes border) is the plainest "just yes" and
-// index 3 (face 20, the far edge of the whole spread) is the most
-// unequivocal; index 4 (face 1, the far edge) is the most unequivocal "no"
-// and index 7 (face 4, right at the Maybe-not border) softens to a plain
-// "just no". So the strongest wording always sits at the two extreme edges
-// of the d20, easing toward plain/bare as you approach the Maybe middle.
+// inconclusive) — no two faces ever say the same thing. Deliberately plain
+// and decisive rather than atmospheric: at most 3 words each, reading as a
+// precise verdict (this is the decision that passes) rather than mystical
+// flavor text. Yes and No are each their own internal gradient too,
+// matching FACE_PHRASE_ORDER below: index 0 (face 17, right at the
+// Maybe-yes border) is the plainest "Yes" and index 3 (face 20, the far
+// edge of the whole spread) is "Unequivocally yes"; index 4 (face 1, the
+// far edge) is "Unequivocally no" and index 7 (face 4, right at the
+// Maybe-not border) softens to a plain "No". So the strongest wording
+// always sits at the two extreme edges of the d20, easing toward plain/bare
+// as you approach the Maybe middle. The Maybe bands use the same
+// weakest-to-strongest confidence ladder (Leans/Likely/Probably/Almost
+// certainly) on both sides, mirrored, so "how sure" reads consistently
+// whichever direction it's leaning.
 const OUTCOME_PHRASES = [
   // Yes: plain -> unequivocal
-  "Just yes",
-  "The stars align in your favor",
-  "Fate says yes",
-  "Without a doubt",
+  "Yes",
+  "Clearly yes",
+  "Strongly yes",
+  "Unequivocally yes",
   // No: unequivocal -> plain
-  "Absolutely not",
-  "No, not this time",
-  "Not really",
-  "Just no",
-  // Maybe yes
-  "Signs point to yes",
-  "Likely, if you're patient",
-  "The odds favor you",
-  "Probably — trust your gut",
-  // Maybe not
-  "Signs point to no",
-  "Doubtful, but not impossible",
-  "The odds are against you",
-  "Probably not — tread carefully",
+  "Unequivocally no",
+  "Strongly no",
+  "Clearly no",
+  "No",
+  // Maybe yes: leaning -> almost certain
+  "Leans yes",
+  "Likely yes",
+  "Probably yes",
+  "Almost certainly yes",
+  // Maybe not: almost certain -> leaning
+  "Almost certainly no",
+  "Probably no",
+  "Likely no",
+  "Leans no",
   // Try again
-  "The mists are unclear, ask again",
-  "The ball is still thinking",
-  "Shake once more",
-  "Ask again when the moment is right",
+  "Inconclusive",
+  "Ask again",
+  "Try again",
+  "Roll again",
 ];
 
 // Arranged as a gradient like a traditional d20's success spread: face 1 is
@@ -1167,6 +1184,15 @@ function diceFrame(now) {
     updateSettle();
   } else if (frozen) {
     updateFrozenFill();
+  } else if (stillSinceAt !== null) {
+    // A stillness attempt is in progress (see updatePauseDetection) --
+    // hold the die exactly where it is rather than letting idle spin keep
+    // drifting it off whatever face was showing when the hold began. This
+    // is the fix for the pause-reveal desync bug: without it, the face
+    // that ends up revealed once the timer completes could differ from
+    // the one that was actually facing the camera when the phone first
+    // went still, because idle spin runs off absolute tilt angle, not
+    // motion, and keeps going even while the phone reads as "still".
   } else {
     updateIdleSpin(dt);
   }
