@@ -95,6 +95,19 @@ let lastFrameAt = null;
 const ROTATION_TRIGGER_THRESHOLD_DEG = 45; // total accumulated rotation to START a roll from idle
 const ROTATION_REDIRECT_THRESHOLD_DEG = 18; // lower bar to REDIRECT a roll already in progress
 const INSTANT_SPIKE_RATE_DEG_PER_SEC = 350; // a single tick this fast triggers immediately, no accumulation needed
+// A touch drag's "rate" (see DRAG_DEG_PER_PX_PER_SEC below) is derived from
+// screen-space distance / event dt, and pointermove events don't arrive on
+// the smooth, evenly-spaced schedule a real gyroscope tick does -- a
+// perfectly calm, slow drag to look around every side of the die can still
+// throw off one freak near-zero-dt sample (touch coalescing, a paused then
+// resumed drag, the very first move after pointerdown) whose computed rate
+// spikes far above what the finger actually moved. A real device's
+// INSTANT_SPIKE_RATE_DEG_PER_SEC is tuned against genuine gyroscope
+// readings and doesn't have this failure mode, so it stays as-is; only the
+// synthetic drag-derived rate needs a much higher bar before a single tick
+// alone can count as "an unmistakably hard flick" and launch a roll instead
+// of just continuing the look-around.
+const DRAG_INSTANT_SPIKE_RATE_DEG_PER_SEC = 900;
 // A leaky bucket like this has a hard floor: no matter how long you sustain
 // a rotation rate below (threshold * ln2 / half-life), it can NEVER cross
 // the threshold — the decay caps its steady-state value below it. At 1.5s
@@ -166,8 +179,10 @@ function handleOrientationEvent(event) {
 // the die can otherwise accumulate the exact same total over a few
 // seconds and accidentally launch a roll. Instant-spike detection (an
 // unmistakably hard flick in a single tick) still applies either way --
-// that's the intended way a hard drag launches a roll.
-function handleMotionEvent(event, accumulate = true) {
+// that's the intended way a hard drag launches a roll -- but spikeThreshold
+// lets the drag call site require a much harder flick than a real device
+// shake needs (see DRAG_INSTANT_SPIKE_RATE_DEG_PER_SEC).
+function handleMotionEvent(event, accumulate = true, spikeThreshold = INSTANT_SPIKE_RATE_DEG_PER_SEC) {
   const rate = event.rotationRate;
   const now = performance.now();
   const rateValid = !!(rate && rate.beta !== null && rate.gamma !== null);
@@ -194,7 +209,7 @@ function handleMotionEvent(event, accumulate = true) {
     // Lower bar to redirect a roll already in progress than to start one
     // from idle — you're already mid-shake at that point.
     const activeThreshold = rolling ? ROTATION_REDIRECT_THRESHOLD_DEG : ROTATION_TRIGGER_THRESHOLD_DEG;
-    const instantSpike = rotSpeed >= INSTANT_SPIKE_RATE_DEG_PER_SEC;
+    const instantSpike = rotSpeed >= spikeThreshold;
     const shouldFire = cooldownClear && (instantSpike || rotationAccumDeg > activeThreshold);
 
     // Snapshot before any reset below, so a recorded sample reflects the
@@ -1228,18 +1243,23 @@ function setPointerHeld(held) {
 // gyroscope/orientation sensor (desktop, denied permission) or who just
 // prefers touch. Feeds the drag's own speed/direction into the EXACT same
 // handleMotionEvent() pipeline a real device shake uses -- same
-// accumulator, same instant-spike check, same redirect threshold, same
-// direction-driven spin axis -- rather than a separate roll path, so
-// dragging genuinely IS "shaking it" as far as the roll logic is
-// concerned, not a lookalike. Only produces samples while pointerHeld is
-// true (the same "armed to roll" gate a real shake already requires), so
-// a plain drag with nothing held down still can't roll the die.
+// accumulator, same redirect threshold, same direction-driven spin axis --
+// rather than a separate roll path, so dragging genuinely IS "shaking it"
+// as far as the roll logic is concerned, not a lookalike. The one
+// deliberate difference is a much higher instant-spike bar (see
+// DRAG_INSTANT_SPIKE_RATE_DEG_PER_SEC) -- a slow, deliberate hold-and-drag
+// to look around every face shouldn't ever get mistaken for "a proper
+// roll" just because one pointermove sample's computed rate spiked. Only
+// produces samples while pointerHeld is true (the same "armed to roll"
+// gate a real shake already requires), so a plain drag with nothing held
+// down still can't roll the die.
 let dragLastX = null;
 let dragLastY = null;
 let dragLastT = null;
 // Screen-space px/s of drag speed -> synthetic deg/s of "rotation rate",
 // fed to handleMotionEvent() with accumulate=false (see the call site) --
-// so this only ever matters for the INSTANT_SPIKE_RATE_DEG_PER_SEC check,
+// so this only ever matters for the instant-spike check (against
+// DRAG_INSTANT_SPIKE_RATE_DEG_PER_SEC, not the real-shake threshold),
 // never the sustained accumulator. Tuned so a brisk flick (a few hundred
 // px in ~100ms, i.e. a couple thousand px/s) clears that spike threshold
 // on its own, the way a hard physical shake does, while any slower,
@@ -1295,9 +1315,15 @@ document.addEventListener("pointermove", (event) => {
   // accumulate=false: a sustained, gentle, one-directional drag (the whole
   // point of look-around -- see applyDragLook() above) must never build up
   // toward a roll just by continuing for a while. Only an unmistakably
-  // hard, fast flick (instant-spike, checked either way) can still launch
-  // or redirect one.
-  handleMotionEvent({ rotationRate: { beta: betaRate, gamma: gammaRate } }, false);
+  // hard, fast flick (instant-spike, against DRAG_INSTANT_SPIKE_RATE_DEG_
+  // PER_SEC -- a deliberately higher bar than a real device shake needs,
+  // since a slow hold-and-drag to view faces can otherwise throw one noisy
+  // rate sample past a lower bar) can still launch or redirect one.
+  handleMotionEvent(
+    { rotationRate: { beta: betaRate, gamma: gammaRate } },
+    false,
+    DRAG_INSTANT_SPIKE_RATE_DEG_PER_SEC
+  );
 });
 
 // A harder/faster shake spins the die faster: the peak rotation rate seen
