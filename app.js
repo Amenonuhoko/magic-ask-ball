@@ -703,7 +703,20 @@ const SETTLE_DURATION_MS = 650; // softened: was 450, paired with a gentler easi
 // directly by the phone's OWN rotation rate (see updateTiltLook()), not by
 // how far from level it's held, so it's a direct position-follow rather
 // than a speed control.
-const TILT_LOOK_DEADZONE_DEG_PER_SEC = 2; // ignores sensor noise while the phone is genuinely still
+// Must be >= PAUSE_STILL_THRESHOLD_DEG_PER_SEC (defined above) -- a real
+// bug, not just a tuning nitpick: at 2, ordinary hand tremor (very
+// commonly 2-12deg/s just from holding a phone, especially while tapping
+// the screen to check or screenshot a result) fell BETWEEN the two
+// thresholds. That tremor read as "still" for pause-detection (so the
+// revealed phrase correctly stayed locked) but as genuine rotation for
+// tilt-look (so the die kept silently drifting to new faces the whole
+// time anyway) -- the exact same phrase staying on screen while the
+// numbers underneath kept changing, looking like duplicate/random faces
+// on the die when it was really just untracked drift. Keeping this at or
+// above the pause threshold guarantees "the phone counts as still" means
+// the same thing everywhere: nothing can drift once pause-detection would
+// also call it still.
+const TILT_LOOK_DEADZONE_DEG_PER_SEC = 15;
 
 // Pausing (the phone going physically still — see updatePauseDetection)
 // snaps the die onto whichever face is currently nearest the camera and
