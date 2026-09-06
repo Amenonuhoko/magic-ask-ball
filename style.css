@@ -90,9 +90,18 @@ main {
    sits before .dice-canvas in the DOM so the die's own render occludes it
    at rest, enriching the space around/behind the die without ever
    covering it up. Clipped to a circle so it never shows past the round
-   viewfinder frame into the square corners. Pure CSS (blurred, animated
-   radial gradients) rather than anything in the WebGL scene, so it costs
-   nothing on the render loop. */
+   viewfinder frame into the square corners. Pure CSS, animated radial
+   gradients rather than anything in the WebGL scene -- but that does NOT
+   mean free: this runs forever, from page load, whether or not the die is
+   ever touched, so it was the single biggest mobile perf cost in the whole
+   page. It used to also carry `filter: blur(18px)` on all three blobs --
+   a real, continuous GPU/CPU rasterization cost paid 24/7 regardless of
+   interaction, on top of running through THREE separate elements at once.
+   Dropped the filter entirely and widened the gradient's own falloff to
+   fake the same softness (a wide, multi-stop radial gradient already
+   fades smoothly with no separate blur pass needed) -- now purely a
+   `transform`-animated gradient, which compositors handle for close to
+   nothing. */
 .mist-layer {
   position: absolute;
   inset: 0;
@@ -108,9 +117,9 @@ main {
   width: 65%;
   height: 65%;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(244, 244, 245, 0.1) 0%, rgba(244, 244, 245, 0) 70%);
-  filter: blur(18px);
+  background: radial-gradient(circle, rgba(244, 244, 245, 0.09) 0%, rgba(244, 244, 245, 0.04) 38%, rgba(244, 244, 245, 0) 68%);
   animation: mist-drift 24s ease-in-out infinite;
+  will-change: transform; /* only transform ever animates here now -- keeps this on its own compositor layer instead of repainting */
 }
 
 .mist-blob-a {
@@ -124,7 +133,7 @@ main {
   left: 42%;
   animation-duration: 30s;
   animation-delay: -9s;
-  background: radial-gradient(circle, rgba(212, 175, 55, 0.09) 0%, rgba(212, 175, 55, 0) 70%);
+  background: radial-gradient(circle, rgba(212, 175, 55, 0.08) 0%, rgba(212, 175, 55, 0.035) 38%, rgba(212, 175, 55, 0) 68%);
 }
 
 .mist-blob-c {
@@ -295,7 +304,12 @@ main {
       HOLDS there via `forwards` (its own 100% keyframe IS the brightest
       value, not a dimmed-down "settled" one) -- the color snap.
     - a "hum" runs forever (`infinite`) on `filter` alone, a slow breathing
-      glow that keeps the held state visibly alive rather than static. */
+      glow that keeps the held state visibly alive rather than static.
+      Single drop-shadow layer, not two -- this can run for as long as a
+      natural 20 stays on screen (no timer clears it), so unlike the
+      one-shot flash, its per-frame filter-recompute cost is ongoing; one
+      layer instead of two roughly halves it with the pulse still reading
+      clearly as one soft glow breathing in and out. */
 @keyframes fanfare-success-flash {
   0% {
     stroke: rgba(212, 175, 55, 0.5);
@@ -309,10 +323,10 @@ main {
 
 @keyframes fanfare-success-hum {
   0%, 100% {
-    filter: drop-shadow(0 0 6px rgba(212, 175, 55, 0.85)) drop-shadow(0 0 16px rgba(212, 175, 55, 0.55));
+    filter: drop-shadow(0 0 9px rgba(212, 175, 55, 0.75));
   }
   50% {
-    filter: drop-shadow(0 0 10px rgba(212, 175, 55, 1)) drop-shadow(0 0 28px rgba(212, 175, 55, 0.85));
+    filter: drop-shadow(0 0 16px rgba(212, 175, 55, 0.95));
   }
 }
 

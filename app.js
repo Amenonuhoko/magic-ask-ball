@@ -322,12 +322,30 @@ nonRandomRollToggleEl.addEventListener("change", () => {
 // die. Before the first pause it's centered on physically flat (frozenZero
 // starts at 0,0).
 const LEVEL_LIGHT_OFFSET_RANGE = 10; // in the 0-100 SVG viewBox; kept small so it stays mostly hidden behind the die
+// Below this, a frame-to-frame change is pure sensor noise, not a visible
+// shift in the light's position (it's sub-pixel at any real screen size) --
+// skipping the write avoids forcing a style/paint pass on this SVG every
+// single one of the ~60 frames/sec this runs, for no visible difference.
+const LEVEL_LIGHT_MIN_DELTA = 0.05;
+let lastLevelLightCx = null;
+let lastLevelLightCy = null;
 
 function updateLevelLight() {
   const nx = Math.max(-1, Math.min(1, (filteredGamma - frozenZeroGamma) / TILT_VISUAL_RANGE_DEG));
   const ny = Math.max(-1, Math.min(1, (filteredBeta - frozenZeroBeta) / TILT_VISUAL_RANGE_DEG));
-  levelLightEl.setAttribute("cx", String(50 + nx * LEVEL_LIGHT_OFFSET_RANGE));
-  levelLightEl.setAttribute("cy", String(50 + ny * LEVEL_LIGHT_OFFSET_RANGE));
+  const cx = 50 + nx * LEVEL_LIGHT_OFFSET_RANGE;
+  const cy = 50 + ny * LEVEL_LIGHT_OFFSET_RANGE;
+  if (
+    lastLevelLightCx !== null &&
+    Math.abs(cx - lastLevelLightCx) < LEVEL_LIGHT_MIN_DELTA &&
+    Math.abs(cy - lastLevelLightCy) < LEVEL_LIGHT_MIN_DELTA
+  ) {
+    return;
+  }
+  lastLevelLightCx = cx;
+  lastLevelLightCy = cy;
+  levelLightEl.setAttribute("cx", String(cx));
+  levelLightEl.setAttribute("cy", String(cy));
 }
 
 function updatePauseDetection(now, dt) {
@@ -986,16 +1004,20 @@ function initDiceScene() {
   faceUpVectors = computeFaceUpVectors(geometry, faceNormals);
   assignPerFaceUVs(geometry);
 
+  // MeshStandardMaterial rather than MeshPhysicalMaterial: clearcoat adds a
+  // whole second specular shading pass per pixel (base layer + clearcoat
+  // layer), which is cheap to shrug off on a desktop GPU but a real,
+  // measurable cost on mobile GPUs rendering this canvas at up to 2x
+  // devicePixelRatio every frame during any roll/tilt/drag. Standard still
+  // gives the same metalness/roughness PBR look from the same texture,
+  // just without that extra layer.
   const materials = FACES.map(
     (face) =>
-      new THREE.MeshPhysicalMaterial({
+      new THREE.MeshStandardMaterial({
         map: makeFaceTexture(face.number),
         color: 0xffffff, // texture already carries the final colors; no tint
-        roughness: 0.15,
-        metalness: 0.15,
-        clearcoat: 1,
-        clearcoatRoughness: 0.06,
-        reflectivity: 1,
+        roughness: 0.2,
+        metalness: 0.2,
       })
   );
   diceMesh = new THREE.Mesh(geometry, materials);
@@ -1008,7 +1030,13 @@ function initDiceScene() {
 
   scene.add(diceMesh);
 
-  renderer = new THREE.WebGLRenderer({ canvas: diceCanvasEl, antialias: true, alpha: true });
+  // antialias:false -- MSAA multiplies the GPU's per-pixel fill cost across
+  // the whole canvas every frame, a real cost on mobile GPUs. The capped
+  // devicePixelRatio below already supersamples on any screen dense enough
+  // to need it (most phones), and the die's facet edges are already inked
+  // by edgeLines above regardless of MSAA, so the softening MSAA would add
+  // is limited to the outer silhouette against the transparent background.
+  renderer = new THREE.WebGLRenderer({ canvas: diceCanvasEl, antialias: false, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   resizeDiceRenderer();
 }
@@ -1340,7 +1368,7 @@ document.addEventListener("pointermove", (event) => {
     false,
     DRAG_INSTANT_SPIKE_RATE_DEG_PER_SEC
   );
-});
+}, { passive: true }); // never calls preventDefault -- touch-action:none already owns gesture handling
 
 // A harder/faster shake spins the die faster: the peak rotation rate seen
 // while accumulating toward the trigger maps to how many full turns it
