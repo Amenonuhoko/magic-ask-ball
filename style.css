@@ -172,6 +172,7 @@ main {
   stroke: rgba(140, 140, 145, 0.16);
   stroke-width: 1.5;
   stroke-linecap: round;
+  stroke-linejoin: round;
   filter: none;
   transition: stroke 0.6s ease, stroke-width 0.4s ease, filter 0.6s ease;
 }
@@ -187,10 +188,17 @@ main {
    gradually turns them a solid gold and sets them glowing, to say "armed —
    shake now to roll". Declared after .is-frozen so it wins when both are
    true (holding is the more time-critical, in-the-moment cue). */
+/* Three stacked drop-shadows (tight/mid/wide) rather than two -- two radii
+   with a big jump between them (3px/9px) read as a bright core with a
+   visible ring around it rather than one smooth glow, especially on the
+   bracket's sharp corner. Adding a middle step and easing the opacities
+   down more gradually between them smooths that into a single continuous
+   falloff instead of two visible bands. */
 .viewfinder.is-held .vf-bracket {
   stroke: var(--gold);
   stroke-width: 2;
-  filter: drop-shadow(0 0 3px rgba(212, 175, 55, 0.85)) drop-shadow(0 0 9px rgba(212, 175, 55, 0.55));
+  filter: drop-shadow(0 0 2px rgba(212, 175, 55, 0.8)) drop-shadow(0 0 6px rgba(212, 175, 55, 0.5))
+    drop-shadow(0 0 14px rgba(212, 175, 55, 0.28));
 }
 
 /* PREVIEW ONLY -- see the matching comments in index.html. Scaled way up
