@@ -178,31 +178,44 @@
   <button id="settings-toggle" class="settings-toggle" type="button" aria-label="Settings" title="Settings">⚙</button>
   <div id="settings-panel" class="settings-panel" hidden>
     <button id="recenter-btn" class="settings-btn settings-btn-primary" type="button">⌖ Recenter</button>
+
     <div class="settings-divider"></div>
-    <div class="settings-section-label">Motion calibration</div>
-    <div id="debug-live" class="debug-live">—</div>
-    <div class="debug-actions">
-      <button id="debug-record-btn" class="debug-btn" type="button">● Record</button>
-      <button id="debug-copy-btn" class="debug-btn" type="button" hidden>Copy data</button>
+    <div class="settings-section-label">Rolls &amp; faces</div>
+    <div class="stat-grid">
+      <div class="stat-cell"><span id="stat-total-rolls" class="stat-value">0</span><span class="stat-label">Total rolls</span></div>
+      <div class="stat-cell"><span id="stat-nat20" class="stat-value">0</span><span class="stat-label">Natural 20s</span></div>
+      <div class="stat-cell"><span id="stat-nat1" class="stat-value">0</span><span class="stat-label">Natural 1s</span></div>
+      <div class="stat-cell"><span id="stat-pause-reveals" class="stat-value">0</span><span class="stat-label">Settled by pause</span></div>
     </div>
-    <div id="debug-summary" class="debug-summary">
-      Records raw motion data while you shake normally, so real numbers can
-      replace guesses. Tap Record, shake a few times like you normally
-      would, tap Stop, then Copy and paste the result into the chat.
-    </div>
+    <div id="stat-face-most-least" class="stat-note">No rolls yet.</div>
+    <div id="stat-face-table" class="stat-face-table"></div>
+
     <div class="settings-divider"></div>
-    <div class="settings-section-label">Frame timing</div>
-    <div id="frame-live" class="debug-live">—</div>
-    <div class="debug-actions">
-      <button id="frame-record-btn" class="debug-btn" type="button">● Record</button>
-      <button id="frame-copy-btn" class="debug-btn" type="button" hidden>Copy data</button>
+    <div class="settings-section-label">Look-around drag speed</div>
+    <div class="stat-grid">
+      <div class="stat-cell"><span id="stat-drag-current" class="stat-value">–</span><span class="stat-label">Current</span></div>
+      <div class="stat-cell"><span id="stat-drag-avg" class="stat-value">–</span><span class="stat-label">Average</span></div>
+      <div class="stat-cell"><span id="stat-drag-peak" class="stat-value">–</span><span class="stat-label">Peak</span></div>
     </div>
-    <div id="frame-summary" class="debug-summary">
-      Records real per-frame timing and rotation deltas while the die
-      animates, so jank or dropped frames show up as numbers instead of a
-      guess. Tap Record, roll a few times and let it idle-spin a bit, tap
-      Stop, then Copy and paste the result into the chat.
+
+    <div class="settings-divider"></div>
+    <div class="settings-section-label">Shake / flick speed</div>
+    <div class="stat-grid">
+      <div class="stat-cell"><span id="stat-shake-avg" class="stat-value">–</span><span class="stat-label">Average</span></div>
+      <div class="stat-cell"><span id="stat-shake-peak" class="stat-value">–</span><span class="stat-label">Peak</span></div>
+      <div class="stat-cell"><span id="stat-rolls-vs-pulls" class="stat-value">0 / 0</span><span class="stat-label">Rolled / denied (not held)</span></div>
     </div>
+
+    <div class="settings-divider"></div>
+    <div class="settings-section-label">Hold duration</div>
+    <div class="stat-grid">
+      <div class="stat-cell"><span id="stat-hold-current" class="stat-value">–</span><span class="stat-label">Current</span></div>
+      <div class="stat-cell"><span id="stat-hold-avg" class="stat-value">–</span><span class="stat-label">Average</span></div>
+      <div class="stat-cell"><span id="stat-hold-longest" class="stat-value">–</span><span class="stat-label">Longest</span></div>
+    </div>
+
+    <div class="settings-divider"></div>
+    <button id="stats-reset-btn" class="settings-btn" type="button">Reset stats</button>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
   <script src="app.js"></script>

@@ -13,14 +13,22 @@ const escapeRingFillEl = document.getElementById("escape-ring-fill");
 const statusIconPauseEl = document.getElementById("status-icon-pause");
 const settingsToggleBtn = document.getElementById("settings-toggle");
 const settingsPanelEl = document.getElementById("settings-panel");
-const debugLiveEl = document.getElementById("debug-live");
-const debugRecordBtn = document.getElementById("debug-record-btn");
-const debugCopyBtn = document.getElementById("debug-copy-btn");
-const debugSummaryEl = document.getElementById("debug-summary");
-const frameLiveEl = document.getElementById("frame-live");
-const frameRecordBtn = document.getElementById("frame-record-btn");
-const frameCopyBtn = document.getElementById("frame-copy-btn");
-const frameSummaryEl = document.getElementById("frame-summary");
+const statTotalRollsEl = document.getElementById("stat-total-rolls");
+const statNat20El = document.getElementById("stat-nat20");
+const statNat1El = document.getElementById("stat-nat1");
+const statPauseRevealsEl = document.getElementById("stat-pause-reveals");
+const statFaceMostLeastEl = document.getElementById("stat-face-most-least");
+const statFaceTableEl = document.getElementById("stat-face-table");
+const statDragCurrentEl = document.getElementById("stat-drag-current");
+const statDragAvgEl = document.getElementById("stat-drag-avg");
+const statDragPeakEl = document.getElementById("stat-drag-peak");
+const statShakeAvgEl = document.getElementById("stat-shake-avg");
+const statShakePeakEl = document.getElementById("stat-shake-peak");
+const statRollsVsPullsEl = document.getElementById("stat-rolls-vs-pulls");
+const statHoldCurrentEl = document.getElementById("stat-hold-current");
+const statHoldAvgEl = document.getElementById("stat-hold-avg");
+const statHoldLongestEl = document.getElementById("stat-hold-longest");
+const statsResetBtn = document.getElementById("stats-reset-btn");
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -212,17 +220,15 @@ function handleMotionEvent(event, accumulate = true, spikeThreshold = INSTANT_SP
     const instantSpike = rotSpeed >= spikeThreshold;
     const shouldFire = cooldownClear && (instantSpike || rotationAccumDeg > activeThreshold);
 
-    // Snapshot before any reset below, so a recorded sample reflects the
-    // accumulator value that actually decided this tick.
-    if (debugRecording) {
-      recordDebugSample(now, rateValid ? rate.beta : null, rateValid ? rate.gamma : null, rotSpeed, rotationAccumDeg, activeThreshold, shouldFire, instantSpike);
-    }
-    updateDebugLiveReadout(rotSpeed, rotationAccumDeg);
-
     if (shouldFire) {
       const peak = Math.max(rotationAccumPeakRate, rotSpeed);
       const beta = rateValid ? rate.beta : undefined;
       const gamma = rateValid ? rate.gamma : undefined;
+
+      stats.shakeSpeedSampleCount++;
+      stats.shakeSpeedSampleSum += peak;
+      if (peak > stats.shakeSpeedPeak) stats.shakeSpeedPeak = peak;
+
       // Held: actually roll (no `!rolling` guard — a shake can interrupt
       // and redirect a roll already in progress, not just start a fresh
       // one). Not held: can't roll, so pull instead — but only from a
@@ -231,12 +237,16 @@ function handleMotionEvent(event, accumulate = true, spikeThreshold = INSTANT_SP
       // its own regardless of whether the hold is later released).
       if (pointerHeld) {
         rollDice(peak, beta, gamma);
+        stats.rollTriggerCount++;
       } else if (!rolling && !settleState) {
         pullDice(peak, beta, gamma);
+        stats.pullTriggerCount++;
       }
       lastRollTriggerAt = now;
       rotationAccumDeg = 0;
       rotationAccumPeakRate = 0;
+      saveStats();
+      renderStatsPanel();
     }
   }
   lastMotionEventAt = now;
@@ -410,184 +420,146 @@ function initOrientation() {
   }
 }
 
-// --- debug/calibration recorder ---
+// --- manipulation stats ---
 //
-// Captures raw motion samples during real shaking so the shake-trigger
-// thresholds above can be tuned against actual data instead of guesses.
-// Everything stays local until "Copy data" is tapped, which puts a JSON
-// blob (constants + samples) on the clipboard to paste back into chat.
+// Real numbers on how the die is actually being handled: how each face's
+// come up, how fast drags/shakes/flicks tend to be, how long a hold
+// typically lasts. Persisted to localStorage (best-effort -- private
+// browsing or a full/blocked store just means stats don't survive a
+// reload, never a hard failure) so the panel reflects usage over time, not
+// just the current session.
+const STATS_STORAGE_KEY = "ask-ball-stats-v1";
 
-let debugRecording = false;
-let debugSamples = [];
-let debugRecordStartAt = 0;
+function emptyStats() {
+  return {
+    totalRolls: 0,
+    totalPauseReveals: 0,
+    natural20Count: 0,
+    natural1Count: 0,
+    faceCounts: Object.fromEntries(Array.from({ length: 20 }, (_, i) => [String(i + 1), 0])),
+    dragSpeedSampleCount: 0,
+    dragSpeedSampleSum: 0,
+    dragSpeedPeak: 0,
+    shakeSpeedSampleCount: 0,
+    shakeSpeedSampleSum: 0,
+    shakeSpeedPeak: 0,
+    rollTriggerCount: 0,
+    pullTriggerCount: 0,
+    holdCount: 0,
+    holdDurationSumMs: 0,
+    holdDurationLongestMs: 0,
+  };
+}
 
-function updateDebugLiveReadout(rotSpeed, accum) {
+function loadStats() {
+  try {
+    const raw = localStorage.getItem(STATS_STORAGE_KEY);
+    if (!raw) return emptyStats();
+    const parsed = JSON.parse(raw);
+    // Merge over a fresh empty() rather than trusting the stored shape
+    // directly, so an older/partial save (or a future field this version
+    // doesn't know about yet) can't leave a field undefined.
+    return { ...emptyStats(), ...parsed, faceCounts: { ...emptyStats().faceCounts, ...(parsed.faceCounts || {}) } };
+  } catch {
+    return emptyStats();
+  }
+}
+
+function saveStats() {
+  try {
+    localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify(stats));
+  } catch {
+    // ignore -- private browsing / storage disabled, stats just won't persist
+  }
+}
+
+let stats = loadStats();
+
+// "Current" drag speed and hold duration are live, moment-to-moment
+// readouts (not aggregated into `stats`) -- see updateLiveStatValues(),
+// called from the always-running frame() loop while the panel is open.
+let liveDragSpeedDegPerSec = null;
+let holdStartedAt = null;
+
+function recordDragSpeedSample(speedDegPerSec) {
+  liveDragSpeedDegPerSec = speedDegPerSec;
+  stats.dragSpeedSampleCount++;
+  stats.dragSpeedSampleSum += speedDegPerSec;
+  if (speedDegPerSec > stats.dragSpeedPeak) stats.dragSpeedPeak = speedDegPerSec;
+  renderStatsPanel();
+}
+
+function formatSpeed(sum, count) {
+  return count > 0 ? `${Math.round(sum / count)}°/s` : "–";
+}
+function formatPeakSpeed(peak) {
+  return peak > 0 ? `${Math.round(peak)}°/s` : "–";
+}
+function formatDurationMs(ms) {
+  return ms > 0 ? `${(ms / 1000).toFixed(1)}s` : "–";
+}
+
+function renderStatsPanel() {
   if (settingsPanelEl.hidden) return;
-  debugLiveEl.textContent = `rate: ${rotSpeed.toFixed(0)} deg/s\naccum: ${accum.toFixed(0)} deg`;
+
+  statTotalRollsEl.textContent = String(stats.totalRolls);
+  statNat20El.textContent = String(stats.natural20Count);
+  statNat1El.textContent = String(stats.natural1Count);
+  statPauseRevealsEl.textContent = String(stats.totalPauseReveals);
+
+  const counts = Object.entries(stats.faceCounts).map(([num, count]) => ({ num: Number(num), count }));
+  counts.sort((a, b) => a.num - b.num);
+  const maxCount = Math.max(1, ...counts.map((c) => c.count));
+  if (stats.totalRolls > 0) {
+    const rolled = counts.filter((c) => c.count > 0);
+    const most = rolled.reduce((a, b) => (b.count > a.count ? b : a));
+    const least = rolled.reduce((a, b) => (b.count < a.count ? b : a));
+    statFaceMostLeastEl.textContent =
+      least.num !== most.num ? `Most: ${most.num} (${most.count}) · Least: ${least.num} (${least.count})` : `Most: ${most.num} (${most.count})`;
+  } else {
+    statFaceMostLeastEl.textContent = "No rolls yet.";
+  }
+  statFaceTableEl.innerHTML = counts
+    .map(({ num, count }) => {
+      const pct = stats.totalRolls > 0 ? Math.round((count / stats.totalRolls) * 100) : 0;
+      const barPct = Math.round((count / maxCount) * 100);
+      return (
+        `<div class="stat-face-row"><span class="stat-face-num">${num}</span>` +
+        `<span class="stat-face-bar-track"><span class="stat-face-bar-fill" style="width:${barPct}%"></span></span>` +
+        `<span class="stat-face-count">${count} (${pct}%)</span></div>`
+      );
+    })
+    .join("");
+
+  statDragAvgEl.textContent = formatSpeed(stats.dragSpeedSampleSum, stats.dragSpeedSampleCount);
+  statDragPeakEl.textContent = formatPeakSpeed(stats.dragSpeedPeak);
+
+  statShakeAvgEl.textContent = formatSpeed(stats.shakeSpeedSampleSum, stats.shakeSpeedSampleCount);
+  statShakePeakEl.textContent = formatPeakSpeed(stats.shakeSpeedPeak);
+  statRollsVsPullsEl.textContent = `${stats.rollTriggerCount} / ${stats.pullTriggerCount}`;
+
+  statHoldAvgEl.textContent = formatDurationMs(stats.holdCount > 0 ? stats.holdDurationSumMs / stats.holdCount : 0);
+  statHoldLongestEl.textContent = formatDurationMs(stats.holdDurationLongestMs);
 }
 
-function recordDebugSample(now, beta, gamma, rotSpeed, accum, threshold, triggered, instantSpike) {
-  debugSamples.push({
-    t: Math.round(now - debugRecordStartAt),
-    beta: beta === null ? null : Math.round(beta * 10) / 10,
-    gamma: gamma === null ? null : Math.round(gamma * 10) / 10,
-    rate: Math.round(rotSpeed * 10) / 10,
-    accum: Math.round(accum * 10) / 10,
-    threshold,
-    triggered,
-    instantSpike,
-  });
-}
-
-function computeDebugSummary(samples) {
-  if (samples.length === 0) return "No samples recorded.";
-  const rates = samples.map((s) => s.rate);
-  const peak = Math.max(...rates);
-  const avg = rates.reduce((a, b) => a + b, 0) / rates.length;
-  const triggerCount = samples.filter((s) => s.triggered).length;
-  const durationSec = (samples[samples.length - 1].t - samples[0].t) / 1000;
-  return (
-    `${samples.length} samples over ${durationSec.toFixed(1)}s\n` +
-    `peak rate: ${peak.toFixed(0)} deg/s, avg: ${avg.toFixed(0)} deg/s\n` +
-    `triggers fired: ${triggerCount}`
-  );
-}
-
-function startDebugRecording() {
-  debugRecording = true;
-  debugSamples = [];
-  debugRecordStartAt = performance.now();
-  debugRecordBtn.textContent = "■ Stop";
-  debugCopyBtn.hidden = true;
-  debugSummaryEl.textContent = "Recording… shake normally, then tap Stop.";
-}
-
-function stopDebugRecording() {
-  debugRecording = false;
-  debugRecordBtn.textContent = "● Record";
-  debugCopyBtn.hidden = debugSamples.length === 0;
-  debugSummaryEl.textContent = computeDebugSummary(debugSamples);
+// Cheap per-frame refresh of just the two truly LIVE values, only while the
+// panel is actually visible (see the call site in frame()) -- everything
+// else in the panel only changes on a real event (a roll, a drag sample, a
+// release) and is updated there instead.
+function updateLiveStatValues() {
+  statDragCurrentEl.textContent = pointerHeld && liveDragSpeedDegPerSec !== null ? `${Math.round(liveDragSpeedDegPerSec)}°/s` : "–";
+  statHoldCurrentEl.textContent = pointerHeld && holdStartedAt !== null ? `${((performance.now() - holdStartedAt) / 1000).toFixed(1)}s` : "–";
 }
 
 settingsToggleBtn.addEventListener("click", () => {
   settingsPanelEl.hidden = !settingsPanelEl.hidden;
+  if (!settingsPanelEl.hidden) renderStatsPanel();
 });
 
-debugRecordBtn.addEventListener("click", () => {
-  if (debugRecording) {
-    stopDebugRecording();
-  } else {
-    startDebugRecording();
-  }
-});
-
-debugCopyBtn.addEventListener("click", async () => {
-  const payload = JSON.stringify({
-    constants: {
-      ROTATION_TRIGGER_THRESHOLD_DEG,
-      ROTATION_REDIRECT_THRESHOLD_DEG,
-      INSTANT_SPIKE_RATE_DEG_PER_SEC,
-      ROTATION_HALF_LIFE_SEC,
-    },
-    samples: debugSamples,
-  });
-  try {
-    await navigator.clipboard.writeText(payload);
-    debugSummaryEl.textContent = "Copied to clipboard.";
-  } catch {
-    debugSummaryEl.textContent = payload;
-  }
-});
-
-// --- frame-timing recorder ---
-//
-// Same reasoning as the shake-calibration recorder above, aimed at the
-// die's animation instead of the shake gesture: captures real per-frame
-// timing and rotation data during a roll/look-around session so "is this
-// smooth" becomes a number to check (dropped-frame-sized gaps between
-// frames, per-frame rotation size) instead of an eyeballed guess. Stays
-// local until "Copy data" is tapped, same as the shake recorder.
-
-let frameRecording = false;
-let frameSamples = [];
-let frameRecordStartAt = 0;
-let prevRecordedQuat = null;
-
-function updateFrameLiveReadout(dt, angleDeltaDeg) {
-  if (settingsPanelEl.hidden) return;
-  const fps = dt > 0 ? 1 / dt : 0;
-  frameLiveEl.textContent = `fps: ${fps.toFixed(0)}\nΔ°/frame: ${angleDeltaDeg.toFixed(2)}`;
-}
-
-// A frame-to-frame gap much larger than even a slow-but-steady 30fps frame
-// (33ms) is a real stall/dropped frame, not just a low-but-consistent
-// frame rate -- this is the number that actually answers "was there jank".
-const FRAME_STALL_THRESHOLD_MS = 50;
-
-function recordFrameSample(now, dt, stateLabel) {
-  const angleDeltaDeg = prevRecordedQuat && diceMesh ? prevRecordedQuat.angleTo(diceMesh.quaternion) * (180 / Math.PI) : 0;
-  if (diceMesh) prevRecordedQuat = diceMesh.quaternion.clone();
-  const dtMs = dt * 1000;
-  frameSamples.push({
-    t: Math.round(now - frameRecordStartAt),
-    dtMs: Math.round(dtMs * 10) / 10,
-    state: stateLabel,
-    angleDeltaDeg: Math.round(angleDeltaDeg * 100) / 100,
-  });
-  updateFrameLiveReadout(dt, angleDeltaDeg);
-}
-
-function computeFrameSummary(samples) {
-  if (samples.length === 0) return "No samples recorded.";
-  const dts = samples.map((s) => s.dtMs);
-  const avgDt = dts.reduce((a, b) => a + b, 0) / dts.length;
-  const maxDt = Math.max(...dts);
-  const avgFps = avgDt > 0 ? 1000 / avgDt : 0;
-  const durationSec = (samples[samples.length - 1].t - samples[0].t) / 1000;
-  const stalls = samples.filter((s) => s.dtMs > FRAME_STALL_THRESHOLD_MS);
-  return (
-    `${samples.length} samples over ${durationSec.toFixed(1)}s\n` +
-    `avg fps: ${avgFps.toFixed(0)}, worst frame gap: ${maxDt.toFixed(0)}ms\n` +
-    `stalls (>${FRAME_STALL_THRESHOLD_MS}ms gap): ${stalls.length}`
-  );
-}
-
-function startFrameRecording() {
-  frameRecording = true;
-  frameSamples = [];
-  frameRecordStartAt = performance.now();
-  prevRecordedQuat = diceMesh ? diceMesh.quaternion.clone() : null;
-  frameRecordBtn.textContent = "■ Stop";
-  frameCopyBtn.hidden = true;
-  frameSummaryEl.textContent = "Recording… roll, tilt, and let it settle a few times, then tap Stop.";
-}
-
-function stopFrameRecording() {
-  frameRecording = false;
-  frameRecordBtn.textContent = "● Record";
-  frameCopyBtn.hidden = frameSamples.length === 0;
-  frameSummaryEl.textContent = computeFrameSummary(frameSamples);
-}
-
-frameRecordBtn.addEventListener("click", () => {
-  if (frameRecording) {
-    stopFrameRecording();
-  } else {
-    startFrameRecording();
-  }
-});
-
-frameCopyBtn.addEventListener("click", async () => {
-  const payload = JSON.stringify({
-    constants: { FRAME_STALL_THRESHOLD_MS },
-    samples: frameSamples,
-  });
-  try {
-    await navigator.clipboard.writeText(payload);
-    frameSummaryEl.textContent = "Copied to clipboard.";
-  } catch {
-    frameSummaryEl.textContent = payload;
-  }
+statsResetBtn.addEventListener("click", () => {
+  stats = emptyStats();
+  saveStats();
+  renderStatsPanel();
 });
 
 // --- dice (three.js) ---
@@ -1236,6 +1208,18 @@ function setPointerHeld(held) {
   if (pointerHeld === held) return;
   pointerHeld = held;
   viewfinderEl.classList.toggle("is-held", held);
+
+  if (held) {
+    holdStartedAt = performance.now();
+  } else if (holdStartedAt !== null) {
+    const durationMs = performance.now() - holdStartedAt;
+    holdStartedAt = null;
+    stats.holdCount++;
+    stats.holdDurationSumMs += durationMs;
+    if (durationMs > stats.holdDurationLongestMs) stats.holdDurationLongestMs = durationMs;
+    saveStats();
+    renderStatsPanel();
+  }
 }
 
 // Tap-and-drag: a second way to "shake" the die, alongside physically
@@ -1281,12 +1265,16 @@ document.addEventListener("pointerup", () => {
   dragLastX = null;
   dragLastY = null;
   dragLastT = null;
+  liveDragSpeedDegPerSec = null;
+  saveStats(); // checkpoint here rather than on every pointermove sample
 });
 document.addEventListener("pointercancel", () => {
   setPointerHeld(false);
   dragLastX = null;
   dragLastY = null;
   dragLastT = null;
+  liveDragSpeedDegPerSec = null;
+  saveStats();
 });
 
 document.addEventListener("pointermove", (event) => {
@@ -1312,6 +1300,7 @@ document.addEventListener("pointermove", (event) => {
   // left/right, deltaBeta = up/down).
   const gammaRate = (dx / dt) * DRAG_DEG_PER_PX_PER_SEC;
   const betaRate = (dy / dt) * DRAG_DEG_PER_PX_PER_SEC;
+  recordDragSpeedSample(Math.abs(betaRate) + Math.abs(gammaRate));
   // accumulate=false: a sustained, gentle, one-directional drag (the whole
   // point of look-around -- see applyDragLook() above) must never build up
   // toward a roll just by continuing for a while. Only an unmistakably
@@ -1568,6 +1557,21 @@ function finishRoll(index, revealedByPause) {
   if (revealedByPause) statusIconPauseEl.removeAttribute("hidden");
   else statusIconPauseEl.setAttribute("hidden", "");
 
+  // Face-appearance stats only count genuine rolls -- a pause-reveal just
+  // settles on whatever face happened to be facing the camera, not a
+  // random outcome, so folding it into "how often does each face come up"
+  // would skew the numbers toward whatever you last looked at.
+  if (revealedByPause) {
+    stats.totalPauseReveals++;
+  } else {
+    stats.totalRolls++;
+    stats.faceCounts[faceNumber] = (stats.faceCounts[faceNumber] || 0) + 1;
+    if (faceNumber === 20) stats.natural20Count++;
+    if (faceNumber === 1) stats.natural1Count++;
+  }
+  saveStats();
+  renderStatsPanel();
+
   // Only an actual rolled result can be a "natural 1" or "natural 20" --
   // settling wherever the die happens to be facing when the phone goes
   // still isn't a roll outcome, so it never triggers fanfare.
@@ -1599,14 +1603,11 @@ function diceFrame(now) {
   // separate concept from the lock icon, which reflects pointerHeld).
   viewfinderEl.classList.toggle("is-frozen", frozen);
 
-  let frameStateLabel;
   let dirty;
   if (rollState) {
-    frameStateLabel = rollState.phase === "spin" ? "roll-spin" : "roll-settle";
     updateRoll();
     dirty = true; // always advances the animation while active
   } else if (settleState) {
-    frameStateLabel = "pause-settle";
     updateSettle();
     dirty = true;
   } else if (frozen) {
@@ -1614,7 +1615,6 @@ function diceFrame(now) {
     // that's the whole point: inspect every side of what you rolled. Only
     // updateFrozenFill() is skipped from the dirty check itself since it
     // only ever touches the SVG ring, never the 3D scene.
-    frameStateLabel = "frozen";
     updateFrozenFill();
     dirty = updateTiltLook(dt);
   } else if (stillSinceAt !== null) {
@@ -1625,10 +1625,8 @@ function diceFrame(now) {
     // face that ends up revealed once the timer completes could differ
     // from the one that was actually facing the camera when the phone
     // first went still.
-    frameStateLabel = "held-still";
     dirty = false; // nothing touches the scene while held
   } else {
-    frameStateLabel = "idle";
     dirty = updateTiltLook(dt); // false while steady/within the deadzone
   }
 
@@ -1640,7 +1638,7 @@ function diceFrame(now) {
   updatePull();
   if (pullWasActive) dirty = true;
 
-  if (frameRecording) recordFrameSample(now, dt, frameStateLabel);
+  if (!settingsPanelEl.hidden) updateLiveStatValues();
 
   // Render-skip-at-rest: skip the actual GPU draw call on any frame where
   // nothing in the scene changed (see forceRenderPending's own comment).
