@@ -62,18 +62,6 @@ let filterInitialized = false;
 
 let lastFrameAt = null;
 
-// Neutral zero-point and sensitivity (degrees of tilt = full spin speed),
-// used by the die's idle spin. Recenter sets the zero-point to whatever
-// tilt the phone is currently at. Tightened from 45° so full spin speed is
-// reached with a smaller, more responsive tilt.
-let tiltZeroBeta = 0;
-let tiltZeroGamma = 0;
-const TILT_RANGE_DEG = 30;
-
-// Current tilt delta (from zero), refreshed every sensor frame.
-let currentDeltaBeta = 0;
-let currentDeltaGamma = 0;
-
 // Shake detection for dice rolls, based on TOTAL accumulated rotation
 // (gyroscope rotationRate integrated over time) rather than a single sharp
 // acceleration spike. This is a decaying "leaky bucket": every devicemotion
@@ -98,7 +86,7 @@ let currentDeltaGamma = 0;
 // roll it — instead it "pulls" the die toward the shake's direction (see
 // pullDice/updatePull) as a felt-but-denied cue, with no new result and no
 // turning to reveal a face; the die is otherwise left exactly as it was
-// (still idle-spinning, or still frozen if it already was).
+// (mid-look-around, or still frozen if it already was).
 //
 // A shake redirects the die instantly — see rollDice() — so the cooldown
 // only needs to be long enough to stop a single continuous shake from
@@ -129,18 +117,16 @@ let lastRollTriggerAt = 0;
 // the page loads. The speed bound is deliberately generous — natural hand
 // tremor while holding a phone "still" is well above 0°/s.
 //
-// IMPORTANT: the die's own idle spin is suspended the MOMENT a stillness
-// attempt begins (see diceFrame()'s `stillSinceAt !== null` branch), not
-// just once the full duration below confirms it. Idle spin is driven by
-// absolute tilt angle, not motion, so without this, holding the phone at
-// any non-zero tilt (i.e., almost always, unless perfectly flat or
-// recentered right there) would keep the die slowly rotating for the
-// entire 3-5s confirmation window even though the PHONE read as "still"
-// the whole time — meaning whichever face happened to be facing the
-// camera at the instant the timer finally fired could be a different one
-// than whatever was showing when the hold actually began, revealing a
-// phrase that doesn't match the number you thought you'd settled on. This
-// was a real, verified bug (see test-pause-face-lock.js), not a rare race.
+// The die's own look-around rotation (see updateTiltLook()) is driven
+// directly by the PHONE's own rotation rate now, not by absolute tilt
+// angle, so "the phone's rotation rate is below threshold" and "the die
+// isn't currently turning" are the same fact by construction -- no second
+// die-specific speed check is needed here the way there used to be (idle
+// spin previously ran off absolute tilt and could keep spinning even while
+// the phone read as perfectly still; see git history / test-pause-face-
+// lock.js for that bug). A finger actively dragging the die to look around
+// also counts as "still busy, not presenting a result" even on the rare
+// setup where the phone itself isn't moving (e.g. resting on a stand).
 //
 // Settling into a lock naturally needs a minimum time, so the required
 // stillness duration is a soft 3s baseline rather than a hair-trigger --
@@ -150,21 +136,6 @@ let lastRollTriggerAt = 0;
 // goes up by half a second, capped at 5s. A clean, decisive settle always
 // just needs the 3s baseline; only repeated false starts make it more
 // patient. Resets back to the baseline once a pause actually fires.
-// Even once the PHONE's rotation rate is low enough to count as "not
-// moving" (the check above), idle spin might still be actively spinning
-// the DIE -- it's driven by absolute tilt, not motion, so holding the
-// phone rock-steady at any non-zero tilt keeps the die spinning
-// continuously. Freezing the die the instant the phone goes still (see
-// diceFrame()'s `stillSinceAt !== null` branch above) while it's still
-// mid-spin snaps it onto whatever face the ongoing spin happens to be
-// passing at that exact frame -- which can be a completely different face
-// than the one you were actually watching approach a moment earlier. So
-// "still enough to start the pause timer" also requires the die's own
-// tilt-driven spin (computed the same way updateIdleSpin() drives it) to
-// already be slow -- the tilt has to have relaxed back near level, the
-// same way a real object settles to rest, not just your hand holding
-// steady at a steep angle.
-const PAUSE_SPIN_THRESHOLD_DEG_PER_SEC = 20;
 const PAUSE_STILL_THRESHOLD_DEG_PER_SEC = 12; // minimum speed to still count as "moving"
 const PAUSE_DURATION_BASE_MS = 3000;
 const PAUSE_DURATION_STEP_MS = 500;
@@ -187,7 +158,16 @@ function handleOrientationEvent(event) {
   hasOrientation = true;
 }
 
-function handleMotionEvent(event) {
+// accumulate=false (used by the drag-look pointermove listener) skips
+// adding this sample into the sustained leaky-bucket accumulator below --
+// see the call site for why: a real device shake is naturally an
+// oscillating back-and-forth burst the bucket is built to catch, but a
+// deliberate, sustained, ONE-directional drag to look around every side of
+// the die can otherwise accumulate the exact same total over a few
+// seconds and accidentally launch a roll. Instant-spike detection (an
+// unmistakably hard flick in a single tick) still applies either way --
+// that's the intended way a hard drag launches a roll.
+function handleMotionEvent(event, accumulate = true) {
   const rate = event.rotationRate;
   const now = performance.now();
   const rateValid = !!(rate && rate.beta !== null && rate.gamma !== null);
@@ -205,7 +185,7 @@ function handleMotionEvent(event) {
     const decay = Math.pow(0.5, dt / ROTATION_HALF_LIFE_SEC);
     rotationAccumDeg *= decay;
 
-    if (rateValid) {
+    if (rateValid && accumulate) {
       rotationAccumDeg += rotSpeed * dt;
       rotationAccumPeakRate = Math.max(rotationAccumPeakRate, rotSpeed);
     }
@@ -262,12 +242,19 @@ function stepFilter(dt) {
   }
 }
 
-function recenterTilt() {
-  tiltZeroBeta = filteredBeta;
-  tiltZeroGamma = filteredGamma;
+// Now that tilt/drag can freely rotate the die to look around every side
+// (see updateTiltLook()/applyDragLook()) with no auto-snap-back, there's no
+// longer a fixed "zero" to return to on its own -- so Recenter is
+// repurposed from "recalibrate the tilt sensor's zero-point" to "jump back
+// to the last settled result" (restQuaternion, updated in finishRoll()),
+// giving you a quick way back after looking around.
+function recenterView() {
+  if (!diceMesh) return;
+  diceMesh.quaternion.copy(restQuaternion);
+  forceRenderPending = true; // mutates the scene from outside diceFrame()'s own dirty tracking
 }
 
-recenterBtn.addEventListener("click", recenterTilt);
+recenterBtn.addEventListener("click", recenterView);
 
 // Bubble-level style indicator, drawn as a dim light BEHIND the die (see
 // #level-light-layer in index.html, positioned before .dice-canvas in the
@@ -299,10 +286,11 @@ function updatePauseDetection(now, dt) {
   prevPauseBeta = filteredBeta;
   prevPauseGamma = filteredGamma;
 
-  const { angVelX, angVelY } = tiltAngularVelocity(currentDeltaGamma, currentDeltaBeta);
-  const dieSpinSpeed = Math.hypot(angVelX, angVelY) * (180 / Math.PI); // rad/s -> deg/s
-
-  if (deviceSpeed > PAUSE_STILL_THRESHOLD_DEG_PER_SEC || dieSpinSpeed > PAUSE_SPIN_THRESHOLD_DEG_PER_SEC) {
+  // A finger actively dragging the die to look around it counts as "not
+  // presenting a result yet" too, even if the phone itself happens to be
+  // perfectly still (e.g. propped on a stand) -- see the pointermove
+  // listener, which drives the same freeform look-around rotation.
+  if (deviceSpeed > PAUSE_STILL_THRESHOLD_DEG_PER_SEC || pointerHeld) {
     if (stillSinceAt !== null) {
       // Broke an in-progress stillness attempt before it confirmed — ask
       // for a little more patience next time.
@@ -347,9 +335,6 @@ function frame(now) {
   lastFrameAt = now;
 
   stepFilter(dt);
-
-  currentDeltaBeta = filteredBeta - tiltZeroBeta;
-  currentDeltaGamma = filteredGamma - tiltZeroGamma;
 
   updateLevelLight();
   updatePauseDetection(now, dt);
@@ -503,7 +488,7 @@ debugCopyBtn.addEventListener("click", async () => {
 //
 // Same reasoning as the shake-calibration recorder above, aimed at the
 // die's animation instead of the shake gesture: captures real per-frame
-// timing and rotation data during a roll/idle-spin session so "is this
+// timing and rotation data during a roll/look-around session so "is this
 // smooth" becomes a number to check (dropped-frame-sized gaps between
 // frames, per-frame rotation size) instead of an eyeballed guess. Stays
 // local until "Copy data" is tapped, same as the shake recorder.
@@ -696,9 +681,9 @@ let diceRafId = null;
 // tilt starting a new animation), but the actual GPU draw call
 // (renderer.render()) is skipped on any frame where nothing in the scene
 // actually changed -- frozen showing a result, or "held-still" mid-pause,
-// or idle spin sitting in its deadzone at a near-level tilt. Continuous
-// rendering at 60fps costs real battery on a device that might otherwise
-// sit at rest for a long time (viewing a result, or just left idle).
+// or look-around sitting in its deadzone with the phone/finger steady.
+// Continuous rendering at 60fps costs real battery on a device that might
+// otherwise sit at rest for a long time (viewing a result, or just left idle).
 // Starts true so the very first frame always renders once a scene exists;
 // resizeDiceRenderer() also sets it, since a resize needs a fresh frame
 // even when nothing else changed.
@@ -711,11 +696,14 @@ let lastDiceFrameAt = null;
 const SPIN_DURATION_MS = 900;
 const SETTLE_DURATION_MS = 650; // softened: was 450, paired with a gentler easing curve below
 
-// Idle spin: same tilt-delta/range the ball used, applied as continuous
-// angular velocity instead of position — tilting "rolls" the die the same
-// direction a rolling ball would move.
-const MAX_SPIN_SPEED = Math.PI * 1.5; // radians/sec at full tilt range
-const IDLE_SPIN_DEADZONE = 0.01; // ignore sub-noise angular velocity (tightened from 0.02)
+// Tilt-look: rotating the phone turns the die 1:1, like slowly spinning it
+// in your hand to look at every side -- holding a tilt (even a steep one)
+// holds that view, rather than the old idle spin's continuous velocity
+// (which kept spinning for as long as you held ANY non-zero tilt). Driven
+// directly by the phone's OWN rotation rate (see updateTiltLook()), not by
+// how far from level it's held, so it's a direct position-follow rather
+// than a speed control.
+const TILT_LOOK_DEADZONE_DEG_PER_SEC = 2; // ignores sensor noise while the phone is genuinely still
 
 // Pausing (the phone going physically still — see updatePauseDetection)
 // snaps the die onto whichever face is currently nearest the camera and
@@ -727,6 +715,13 @@ const IDLE_SPIN_DEADZONE = 0.01; // ignore sub-noise angular velocity (tightened
 let frozen = false;
 let frozenZeroBeta = 0;
 let frozenZeroGamma = 0;
+
+// The last settled result's orientation, updated in finishRoll(). Tilt and
+// drag can freely rotate the die to look around every side with no auto-
+// snap-back (see updateTiltLook()/applyDragLook()), so this is what the
+// Recenter button jumps back to. Starts at identity -- before any result
+// has ever been shown, there's nothing else meaningful to recenter to.
+const restQuaternion = new THREE.Quaternion();
 let settleState = null;
 const TILT_VISUAL_RANGE_DEG = 66;
 const RELEASE_SETTLE_DURATION_MS = 300;
@@ -962,61 +957,93 @@ function resizeDiceRenderer() {
 window.addEventListener("resize", resizeDiceRenderer);
 
 // Scratch vector/quaternion, reused every frame instead of allocating
-// fresh THREE objects on this hot 60fps path (idle spin runs continuously
-// whenever the die isn't rolling/settling).
-const idleSpinScratchAxis = new THREE.Vector3();
-const idleSpinScratchQuat = new THREE.Quaternion();
+// fresh THREE objects on this hot 60fps path.
+const tiltLookScratchAxis = new THREE.Vector3();
+const tiltLookScratchQuat = new THREE.Quaternion();
 
-// Shared by updateIdleSpin() and updatePauseDetection(): the instantaneous
-// angular velocity idle spin would apply for a given held tilt. Pulled out
-// so pause-detection can ask "how fast is idle spin currently driving the
-// die" using the exact same formula the animation itself uses, rather than
-// a second guess that could drift out of sync with it.
-function tiltAngularVelocity(deltaGamma, deltaBeta) {
-  const clampedGamma = Math.max(-TILT_RANGE_DEG, Math.min(TILT_RANGE_DEG, deltaGamma));
-  const clampedBeta = Math.max(-TILT_RANGE_DEG, Math.min(TILT_RANGE_DEG, deltaBeta));
-  return {
-    angVelY: (clampedGamma / TILT_RANGE_DEG) * MAX_SPIN_SPEED, // left/right tilt -> spin around vertical axis
-    angVelX: (clampedBeta / TILT_RANGE_DEG) * MAX_SPIN_SPEED, // forward/back tilt -> spin around horizontal axis
-  };
-}
+// Tracks the phone's own orientation as of the last tick this ran, so each
+// call only has to apply the CHANGE since then -- not an absolute tilt
+// value the way the old idle spin worked. null until the first real tick
+// (can't take a delta against nothing).
+let lastTiltLookBeta = null;
+let lastTiltLookGamma = null;
 
 // Returns whether it actually rotated the die this frame -- diceFrame()
 // uses that to decide whether the scene is dirty and needs a real render,
-// so a held-flat phone (nothing but the deadzone-below tilt below) doesn't
-// force a GPU draw call every single frame for no visible change.
-function updateIdleSpin(dt) {
+// so a phone held rock-steady (nothing but sensor noise) doesn't force a
+// GPU draw call every single frame for no visible change.
+function updateTiltLook(dt) {
   if (rolling || !diceMesh) return false;
 
-  const { angVelX, angVelY } = tiltAngularVelocity(currentDeltaGamma, currentDeltaBeta);
+  if (lastTiltLookBeta === null) {
+    lastTiltLookBeta = filteredBeta;
+    lastTiltLookGamma = filteredGamma;
+    return false;
+  }
 
-  // Angular velocities add as vectors (they're a derivative); finite
-  // rotations don't (quaternion multiplication isn't commutative). This
-  // used to apply angVelY and angVelX as two SEPARATE sequential
-  // single-axis rotations each frame -- correct for any one frame in
-  // isolation, but frame-rate DEPENDENT over time: splitting the same
-  // held tilt into more, smaller interleaved Y-then-X steps measurably
-  // converges to a different final orientation than fewer, larger steps
-  // (verified empirically: 0.67deg divergence between 30fps and 240fps
-  // over 2s of constant tilt, shrinking roughly in proportion to step
-  // size -- the signature of a non-commutative composition error, not
-  // noise). Combining both axes into ONE instantaneous angular-velocity
-  // vector and integrating it as a single rotation per frame has no such
-  // order to depend on: for a constant angular velocity this is exact
-  // regardless of step size, since every sub-step now shares the exact
-  // same axis and rotations about a fixed axis simply add.
-  const speed = Math.hypot(angVelX, angVelY);
-  if (speed < IDLE_SPIN_DEADZONE) return false;
+  const deltaBeta = filteredBeta - lastTiltLookBeta;
+  const deltaGamma = filteredGamma - lastTiltLookGamma;
+  lastTiltLookBeta = filteredBeta;
+  lastTiltLookGamma = filteredGamma;
+  if (dt <= 0) return false;
 
-  idleSpinScratchAxis.set(angVelX, angVelY, 0).normalize();
-  const q = idleSpinScratchQuat.setFromAxisAngle(idleSpinScratchAxis, speed * dt);
-  // Compose in world space (premultiply) so "tilt right" always spins the
-  // same screen-space direction regardless of the die's current orientation.
+  // A rate-based deadzone (not an absolute-angle one, unlike the old idle
+  // spin): ignores sensor jitter while genuinely still, but never blocks
+  // real movement regardless of how far from "zero" the phone is currently
+  // held -- there IS no zero here, only how much you're turning it right
+  // now, which is exactly what makes holding a tilt hold a fixed view.
+  const rateDegPerSec = Math.hypot(deltaBeta, deltaGamma) / dt;
+  if (rateDegPerSec < TILT_LOOK_DEADZONE_DEG_PER_SEC) return false;
+
+  // Both axes combined into ONE rotation (same reasoning as the old idle
+  // spin fix: composing two separate single-axis rotations is order-
+  // dependent and frame-rate dependent, since rotations don't commute).
+  // Here it's simpler still -- each tick applies the ACTUAL measured
+  // change directly, so there's no velocity to integrate or step-size to
+  // depend on: the total rotation over any stretch of real time is just
+  // the sum of the real deltas, however finely diceFrame() happens to
+  // sample them.
+  tiltLookScratchAxis.set(deltaBeta, deltaGamma, 0).normalize();
+  const angleRad = (Math.hypot(deltaBeta, deltaGamma) * Math.PI) / 180; // 1:1 with the phone's own rotation
+  const q = tiltLookScratchQuat.setFromAxisAngle(tiltLookScratchAxis, angleRad);
+  // Compose in world space (premultiply) so "turn the phone right" always
+  // turns the die the same screen-space direction regardless of its
+  // current orientation.
   diceMesh.quaternion.premultiply(q);
   // Repeated premultiplication accumulates floating-point error over many
   // frames; renormalize every frame so it can't drift off the unit sphere.
   diceMesh.quaternion.normalize();
   return true;
+}
+
+// Drag-to-look: a direct, position-based sibling to updateTiltLook() above,
+// for touch/mouse -- every pointermove (see the listener below, which
+// calls this) rotates the die by an amount proportional to how far the
+// pointer actually moved, not how fast, so it works the instant you touch
+// down with no separate "hold to arm" step, and stops exactly where you
+// release it (no momentum, no snap-back). A drag that's ALSO fast enough
+// separately feeds the existing shake-accumulator (see the same listener),
+// which can still launch or redirect a real roll -- the two are
+// independent: this is purely visual, the accumulator is purely about
+// triggering a result.
+const DRAG_LOOK_DEG_PER_PX = 0.35;
+const dragLookScratchAxis = new THREE.Vector3();
+const dragLookScratchQuat = new THREE.Quaternion();
+
+function applyDragLook(dx, dy) {
+  if (!diceMesh || rolling || settleState) return;
+  if (dx === 0 && dy === 0) return;
+  // Same axis convention as updateTiltLook(): horizontal movement turns
+  // the die around the vertical axis, vertical movement around the
+  // horizontal axis.
+  const deltaGamma = dx * DRAG_LOOK_DEG_PER_PX;
+  const deltaBeta = dy * DRAG_LOOK_DEG_PER_PX;
+  dragLookScratchAxis.set(deltaBeta, deltaGamma, 0).normalize();
+  const angleRad = (Math.hypot(deltaBeta, deltaGamma) * Math.PI) / 180;
+  const q = dragLookScratchQuat.setFromAxisAngle(dragLookScratchAxis, angleRad);
+  diceMesh.quaternion.premultiply(q);
+  diceMesh.quaternion.normalize();
+  forceRenderPending = true; // runs outside diceFrame()'s own dirty tracking
 }
 
 // Purely a visual readout of how far you've tilted since the die came to
@@ -1155,12 +1182,14 @@ function setPointerHeld(held) {
 let dragLastX = null;
 let dragLastY = null;
 let dragLastT = null;
-// Screen-space px/s of drag speed -> synthetic deg/s of "rotation rate".
-// Tuned so a brisk flick (a few hundred px in ~100ms, i.e. a couple
-// thousand px/s) clears INSTANT_SPIKE_RATE_DEG_PER_SEC on its own, the
-// way a hard physical shake does, while a slow deliberate drag stays
-// under the accumulator's steady-state floor and needs genuine back-and-
-// forth dragging to build up, matching how a gentle real shake behaves.
+// Screen-space px/s of drag speed -> synthetic deg/s of "rotation rate",
+// fed to handleMotionEvent() with accumulate=false (see the call site) --
+// so this only ever matters for the INSTANT_SPIKE_RATE_DEG_PER_SEC check,
+// never the sustained accumulator. Tuned so a brisk flick (a few hundred
+// px in ~100ms, i.e. a couple thousand px/s) clears that spike threshold
+// on its own, the way a hard physical shake does, while any slower,
+// sustained drag -- however long you keep it up -- never launches a roll
+// on its own, only looks around (see applyDragLook()).
 const DRAG_DEG_PER_PX_PER_SEC = 0.22;
 
 document.addEventListener("pointerdown", (event) => {
@@ -1194,14 +1223,26 @@ document.addEventListener("pointermove", (event) => {
   dragLastX = event.clientX;
   dragLastY = event.clientY;
   dragLastT = now;
+
+  // Gentle or fast, every drag directly rotates the die to look around
+  // (position-based, not a rate -- so it works regardless of dt). A drag
+  // that's ALSO fast enough is separately picked up by the accumulator
+  // below, exactly as before, and can still launch/redirect a roll.
+  applyDragLook(dx, dy);
+
   if (dt <= 0) return; // duplicate/zero-gap event; nothing to derive a rate from
 
   // Horizontal drag -> gamma-like rate, vertical drag -> beta-like rate,
-  // matching the same axis convention idle spin already uses for tilt
-  // (normGamma = left/right, normBeta = up/down).
+  // matching the same axis convention tilt-look uses (deltaGamma =
+  // left/right, deltaBeta = up/down).
   const gammaRate = (dx / dt) * DRAG_DEG_PER_PX_PER_SEC;
   const betaRate = (dy / dt) * DRAG_DEG_PER_PX_PER_SEC;
-  handleMotionEvent({ rotationRate: { beta: betaRate, gamma: gammaRate } });
+  // accumulate=false: a sustained, gentle, one-directional drag (the whole
+  // point of look-around -- see applyDragLook() above) must never build up
+  // toward a roll just by continuing for a while. Only an unmistakably
+  // hard, fast flick (instant-spike, checked either way) can still launch
+  // or redirect one.
+  handleMotionEvent({ rotationRate: { beta: betaRate, gamma: gammaRate } }, false);
 });
 
 // A harder/faster shake spins the die faster: the peak rotation rate seen
@@ -1229,7 +1270,7 @@ function intensityFromPeakRate(peakRotationRate) {
 // leftward instantly (no blending old momentum into new — the animation
 // always restarts from the die's CURRENT visual orientation), shaking
 // right does the same in reverse. Uses the same axis convention as tilt's
-// idle spin: rotation rate around the device's beta (X) axis spins the die
+// tilt-look: rotation rate around the device's beta (X) axis spins the die
 // around X, rate around gamma (Y) spins it around Y.
 function directionalSpinAxis(betaRate, gammaRate) {
   if (
@@ -1312,8 +1353,8 @@ function updateRoll() {
     rollState = null;
     // Freeze on the revealed face, same as pauseAndReveal() does — without
     // this, the die had no `frozen` transition at all after a completed
-    // roll, so it would immediately resume tilt-driven idle spin off of
-    // whatever tilt the phone happened to be at. Recalibrate the "level"
+    // roll, so it would immediately resume tilt-look off of whatever tilt
+    // the phone happened to be at. Recalibrate the "level"
     // reference now too, for the same reason pauseAndReveal() does: so the
     // resting-tilt fill and level light both start from zero instead of
     // measuring drift from a stale, possibly long-past reference.
@@ -1327,7 +1368,7 @@ function updateRoll() {
 // handleMotionEvent) — instead it "pulls" the die a short distance toward
 // the shake's direction and springs it back, a felt-but-denied cue with no
 // rotation and no new result. Purely a position offset (diceMesh.position),
-// entirely independent of whatever rotation state (idle spin/frozen/roll)
+// entirely independent of whatever rotation state (tilt-look/frozen/roll)
 // is also active, so it layers on top of it without conflict.
 const PULL_OUT_DURATION_MS = 160;
 const PULL_BACK_DURATION_MS = 320;
@@ -1428,6 +1469,7 @@ function negativeIntensity(faceNumber) {
 // glyph — instead of text.
 function finishRoll(index, revealedByPause) {
   rolling = false;
+  restQuaternion.copy(diceMesh.quaternion); // what Recenter jumps back to after looking around
   const faceNumber = FACES[index].number;
   diceAnswerEl.textContent = FACES[index].phrase;
   sigilLayerEl.style.setProperty("--sigil-glow", String(affirmativeIntensity(faceNumber)));
@@ -1478,23 +1520,26 @@ function diceFrame(now) {
     updateSettle();
     dirty = true;
   } else if (frozen) {
+    // Look-around (tilt/drag) still works while frozen showing a result --
+    // that's the whole point: inspect every side of what you rolled. Only
+    // updateFrozenFill() is skipped from the dirty check itself since it
+    // only ever touches the SVG ring, never the 3D scene.
     frameStateLabel = "frozen";
-    updateFrozenFill(); // only touches the SVG ring fill, never the 3D scene
-    dirty = false;
+    updateFrozenFill();
+    dirty = updateTiltLook(dt);
   } else if (stillSinceAt !== null) {
     // A stillness attempt is in progress (see updatePauseDetection) --
-    // hold the die exactly where it is rather than letting idle spin keep
-    // drifting it off whatever face was showing when the hold began. This
-    // is the fix for the pause-reveal desync bug: without it, the face
-    // that ends up revealed once the timer completes could differ from
-    // the one that was actually facing the camera when the phone first
-    // went still, because idle spin runs off absolute tilt angle, not
-    // motion, and keeps going even while the phone reads as "still".
+    // hold the die exactly where it is rather than letting look-around
+    // keep drifting it off whatever face was showing when the hold began.
+    // This is the fix for the pause-reveal desync bug: without it, the
+    // face that ends up revealed once the timer completes could differ
+    // from the one that was actually facing the camera when the phone
+    // first went still.
     frameStateLabel = "held-still";
     dirty = false; // nothing touches the scene while held
   } else {
     frameStateLabel = "idle";
-    dirty = updateIdleSpin(dt); // false while flat/within the deadzone
+    dirty = updateTiltLook(dt); // false while steady/within the deadzone
   }
 
   // A pull (see pullDice()) moves diceMesh.position independently of
