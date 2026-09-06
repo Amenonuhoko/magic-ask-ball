@@ -839,6 +839,28 @@ function assignPerFaceUVs(geometry) {
   uv.needsUpdate = true;
 }
 
+// Only ONE face can ever be twisted upright at a time (see uprightTwist());
+// every other visible face is necessarily shown at whatever arbitrary
+// rotation its own position happens to leave it at -- normal for any
+// polyhedral die, but it means a digit's shape has to survive being seen
+// at any angle, not just upright. Two real per-digit ambiguities showed up
+// under rotation (caught by screenshotting real faces, see
+// scratchpad/crop-11.png from that investigation):
+//   - "1" in this font carries a diagonal serif flag that, rotated away
+//     from upright, reads as the diagonal stroke of a "7" -- so a rotated
+//     "11" could be misread as "17"/"71", right next to a genuine "17".
+//   - "6" and "9" are literal rotational mirrors of each other in any
+//     font, and both are real face numbers on this die -- the exact
+//     problem physical dice solve with an underline under one or both.
+// Fixed the same way: "1" is hand-drawn as a plain vertical bar (a bare
+// stroke has no diagonal to misread, at any rotation) instead of the
+// font's glyph, and "6"/"9" get a short underline. Every other digit is
+// unambiguous under rotation and still uses the font as-is.
+const DIGIT_FONT_SIZE = 108;
+const ONE_BAR_WIDTH = DIGIT_FONT_SIZE * 0.16;
+const ONE_BAR_HEIGHT = DIGIT_FONT_SIZE * 0.74; // matches this font's own digit cap-height
+const SIX_NINE_UNDERLINE_HEIGHT = DIGIT_FONT_SIZE * 0.07;
+
 function makeFaceTexture(number) {
   const size = 256;
   const canvas = document.createElement("canvas");
@@ -850,12 +872,31 @@ function makeFaceTexture(number) {
   ctx.fillRect(0, 0, size, size);
 
   ctx.fillStyle = GOLD_COLOR;
-  ctx.font = "bold 108px system-ui, sans-serif";
-  ctx.textAlign = "center";
+  ctx.font = `bold ${DIGIT_FONT_SIZE}px system-ui, sans-serif`;
+  ctx.textAlign = "left";
   ctx.textBaseline = "middle";
+
   // Sits near the centroid of the canonical UV triangle above (apex at the
   // canvas top, base at the bottom), not the canvas's literal center.
-  ctx.fillText(String(number), size / 2, size * 0.66);
+  const baselineY = size * 0.66;
+  const chars = String(number).split("");
+  const widths = chars.map((ch) => ctx.measureText(ch).width);
+  const totalWidth = widths.reduce((a, b) => a + b, 0);
+  let x = size / 2 - totalWidth / 2;
+
+  chars.forEach((ch, i) => {
+    const w = widths[i];
+    if (ch === "1") {
+      ctx.fillRect(x + w / 2 - ONE_BAR_WIDTH / 2, baselineY - ONE_BAR_HEIGHT / 2, ONE_BAR_WIDTH, ONE_BAR_HEIGHT);
+    } else {
+      ctx.fillText(ch, x, baselineY);
+      if (ch === "6" || ch === "9") {
+        const underlineY = baselineY + ONE_BAR_HEIGHT / 2 + DIGIT_FONT_SIZE * 0.06;
+        ctx.fillRect(x + w * 0.12, underlineY, w * 0.76, SIX_NINE_UNDERLINE_HEIGHT);
+      }
+    }
+    x += w;
+  });
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.needsUpdate = true;
