@@ -257,12 +257,20 @@ main {
    red as --sigil-glow-red rises (0 = the shared gold at rest, matching
    Bound Vessel; 1 = rgb(255,40,40)), so the mark's own lines turn red, not
    just their glow. The drop-shadow color was moved to match the same red
-   endpoint for one consistent hue instead of two different reds. */
+   endpoint for one consistent hue instead of two different reds.
+   --sigil-glow-red-hue is a separate, BOOSTED (2x, capped at 1) copy of
+   the same variable used only for this color mix -- plain linear mixing
+   still looked orange/amber through the whole low-to-mid range (a 0-0.5
+   glow only got half of the way from gold to red), so the hue itself now
+   reaches pure red by the time the intensity is at 0.5, while opacity and
+   the glow radius below still ramp across the full 0-1 range for how
+   BRIGHT/visible it gets. */
 .sigil-seed-ward {
+  --sigil-glow-red-hue: min(1, var(--sigil-glow-red, 0) * 2);
   stroke: rgb(
-    calc(212 + var(--sigil-glow-red, 0) * 43),
-    calc(175 - var(--sigil-glow-red, 0) * 135),
-    calc(55 - var(--sigil-glow-red, 0) * 15)
+    calc(212 + var(--sigil-glow-red-hue) * 43),
+    calc(175 - var(--sigil-glow-red-hue) * 135),
+    calc(55 - var(--sigil-glow-red-hue) * 15)
   );
   opacity: calc(0.045 + var(--sigil-glow-red, 0) * 0.3);
   filter: blur(0.06px)

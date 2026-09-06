@@ -1457,6 +1457,14 @@ function triggerFanfare(kind) {
 // last couple of steps toward the edge -- e.g. face 16 (linear 0.5) lands
 // at just ~0.18, while face 20 (linear 1) is still exactly 1.
 const GLOW_CURVE_EXPONENT = 2.5;
+// negativeIntensity() uses its own, much flatter curve than the
+// affirmative side's -- at 2.5, faces 5-8 (Maybe not: "Leans no" through
+// "Almost certainly no") landed at just 0.006-0.18, reading as basically
+// still-gold with no real red in them; only faces 1-2 showed any
+// meaningful color. Dropping to 1 (linear) makes every face in the whole
+// No/Maybe-not half show a clearly visible, proportional amount of red,
+// not just the single most extreme face.
+const NEGATIVE_GLOW_CURVE_EXPONENT = 1;
 
 // 0 for any face in the No/Maybe not/Try again bands (faces 1-12), then
 // curving up to 1 at face 20 (the single most emphatic "yes") across the
@@ -1473,10 +1481,11 @@ function affirmativeIntensity(faceNumber) {
 // 0 for any face in Try again/Maybe yes/Yes (faces 9-20), then curving up
 // to 1 at face 1 (the single most emphatic "no"). Drives --sigil-glow-red
 // so the sigil preview gets a red glow the more negative the answer, never
-// for a non-negative one.
+// for a non-negative one. Uses NEGATIVE_GLOW_CURVE_EXPONENT, not the
+// shared affirmative one -- see its comment above.
 function negativeIntensity(faceNumber) {
   if (faceNumber >= 9) return 0;
-  return Math.pow((9 - faceNumber) / 8, GLOW_CURVE_EXPONENT);
+  return Math.pow((9 - faceNumber) / 8, NEGATIVE_GLOW_CURVE_EXPONENT);
 }
 
 // Whether the result was revealed by the phone going still (rather than a
