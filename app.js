@@ -885,7 +885,12 @@ function makeFaceTexture(number) {
       ctx.fillRect(x + w / 2 - ONE_BAR_WIDTH / 2, baselineY - ONE_BAR_HEIGHT / 2, ONE_BAR_WIDTH, ONE_BAR_HEIGHT);
     } else {
       ctx.fillText(ch, x, baselineY);
-      if (ch === "6" || ch === "9") {
+      // Only the standalone faces 6 and 9 get the underline -- those are
+      // the pair that's actually ambiguous with each other (both are real
+      // face numbers on this die). 16 and 19 rotate into "91"/"61", which
+      // aren't real faces here, so there's nothing to disambiguate and the
+      // underline was just visual clutter on them.
+      if (chars.length === 1 && (ch === "6" || ch === "9")) {
         const underlineY = baselineY + ONE_BAR_HEIGHT / 2 + DIGIT_FONT_SIZE * 0.06;
         ctx.fillRect(x + w * 0.12, underlineY, w * 0.76, SIX_NINE_UNDERLINE_HEIGHT);
       }
