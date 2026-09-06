@@ -853,7 +853,6 @@ function assignPerFaceUVs(geometry) {
 // unambiguous under rotation and still uses the font as-is.
 const DIGIT_FONT_SIZE = 108;
 const ONE_BAR_WIDTH = DIGIT_FONT_SIZE * 0.16;
-const ONE_BAR_HEIGHT = DIGIT_FONT_SIZE * 0.74; // matches this font's own digit cap-height
 const SIX_NINE_UNDERLINE_HEIGHT = DIGIT_FONT_SIZE * 0.07;
 
 function makeFaceTexture(number) {
@@ -879,10 +878,21 @@ function makeFaceTexture(number) {
   const totalWidth = widths.reduce((a, b) => a + b, 0);
   let x = size / 2 - totalWidth / 2;
 
+  // The "1" bar's vertical extent is measured from a real digit's actual
+  // glyph bounds ("8": full height, no descender) rather than a guessed
+  // fraction of the font size -- a fixed guess left the bar sitting
+  // slightly lower than the real digits (most visible in "16"/"19", where
+  // the "1" bar read as sitting noticeably below the "6"/"9" next to it).
+  // Measuring the real glyph keeps the two always in exact agreement, in
+  // this font or any other.
+  const refMetrics = ctx.measureText("8");
+  const barTop = baselineY - refMetrics.actualBoundingBoxAscent;
+  const barBottom = baselineY + refMetrics.actualBoundingBoxDescent;
+
   chars.forEach((ch, i) => {
     const w = widths[i];
     if (ch === "1") {
-      ctx.fillRect(x + w / 2 - ONE_BAR_WIDTH / 2, baselineY - ONE_BAR_HEIGHT / 2, ONE_BAR_WIDTH, ONE_BAR_HEIGHT);
+      ctx.fillRect(x + w / 2 - ONE_BAR_WIDTH / 2, barTop, ONE_BAR_WIDTH, barBottom - barTop);
     } else {
       ctx.fillText(ch, x, baselineY);
       // Only the standalone faces 6 and 9 get the underline -- those are
@@ -891,7 +901,7 @@ function makeFaceTexture(number) {
       // aren't real faces here, so there's nothing to disambiguate and the
       // underline was just visual clutter on them.
       if (chars.length === 1 && (ch === "6" || ch === "9")) {
-        const underlineY = baselineY + ONE_BAR_HEIGHT / 2 + DIGIT_FONT_SIZE * 0.06;
+        const underlineY = barBottom + DIGIT_FONT_SIZE * 0.06;
         ctx.fillRect(x + w * 0.12, underlineY, w * 0.76, SIX_NINE_UNDERLINE_HEIGHT);
       }
     }
