@@ -691,6 +691,19 @@ let faceNormals = null;
 let faceUpVectors = null;
 let diceRafId = null;
 
+// Render-skip-at-rest: diceFrame() runs requestAnimationFrame continuously
+// no matter what (cheap -- it's the only way to promptly notice a shake or
+// tilt starting a new animation), but the actual GPU draw call
+// (renderer.render()) is skipped on any frame where nothing in the scene
+// actually changed -- frozen showing a result, or "held-still" mid-pause,
+// or idle spin sitting in its deadzone at a near-level tilt. Continuous
+// rendering at 60fps costs real battery on a device that might otherwise
+// sit at rest for a long time (viewing a result, or just left idle).
+// Starts true so the very first frame always renders once a scene exists;
+// resizeDiceRenderer() also sets it, since a resize needs a fresh frame
+// even when nothing else changed.
+let forceRenderPending = true;
+
 let rolling = false;
 let rollState = null;
 let lastDiceFrameAt = null;
@@ -902,6 +915,7 @@ function resizeDiceRenderer() {
   renderer.setSize(size, size, false);
   camera.aspect = 1;
   camera.updateProjectionMatrix();
+  forceRenderPending = true; // new size needs a fresh frame even if the scene itself didn't change
 }
 
 window.addEventListener("resize", resizeDiceRenderer);
@@ -926,8 +940,12 @@ function tiltAngularVelocity(deltaGamma, deltaBeta) {
   };
 }
 
+// Returns whether it actually rotated the die this frame -- diceFrame()
+// uses that to decide whether the scene is dirty and needs a real render,
+// so a held-flat phone (nothing but the deadzone-below tilt below) doesn't
+// force a GPU draw call every single frame for no visible change.
 function updateIdleSpin(dt) {
-  if (rolling || !diceMesh) return;
+  if (rolling || !diceMesh) return false;
 
   const { angVelX, angVelY } = tiltAngularVelocity(currentDeltaGamma, currentDeltaBeta);
 
@@ -947,7 +965,7 @@ function updateIdleSpin(dt) {
   // regardless of step size, since every sub-step now shares the exact
   // same axis and rotations about a fixed axis simply add.
   const speed = Math.hypot(angVelX, angVelY);
-  if (speed < IDLE_SPIN_DEADZONE) return;
+  if (speed < IDLE_SPIN_DEADZONE) return false;
 
   idleSpinScratchAxis.set(angVelX, angVelY, 0).normalize();
   const q = idleSpinScratchQuat.setFromAxisAngle(idleSpinScratchAxis, speed * dt);
@@ -957,6 +975,7 @@ function updateIdleSpin(dt) {
   // Repeated premultiplication accumulates floating-point error over many
   // frames; renormalize every frame so it can't drift off the unit sphere.
   diceMesh.quaternion.normalize();
+  return true;
 }
 
 // Purely a visual readout of how far you've tilted since the die came to
@@ -1408,15 +1427,19 @@ function diceFrame(now) {
   viewfinderEl.classList.toggle("is-frozen", frozen);
 
   let frameStateLabel;
+  let dirty;
   if (rollState) {
     frameStateLabel = rollState.phase === "spin" ? "roll-spin" : "roll-settle";
     updateRoll();
+    dirty = true; // always advances the animation while active
   } else if (settleState) {
     frameStateLabel = "pause-settle";
     updateSettle();
+    dirty = true;
   } else if (frozen) {
     frameStateLabel = "frozen";
-    updateFrozenFill();
+    updateFrozenFill(); // only touches the SVG ring fill, never the 3D scene
+    dirty = false;
   } else if (stillSinceAt !== null) {
     // A stillness attempt is in progress (see updatePauseDetection) --
     // hold the die exactly where it is rather than letting idle spin keep
@@ -1427,15 +1450,31 @@ function diceFrame(now) {
     // went still, because idle spin runs off absolute tilt angle, not
     // motion, and keeps going even while the phone reads as "still".
     frameStateLabel = "held-still";
+    dirty = false; // nothing touches the scene while held
   } else {
     frameStateLabel = "idle";
-    updateIdleSpin(dt);
+    dirty = updateIdleSpin(dt); // false while flat/within the deadzone
   }
+
+  // A pull (see pullDice()) moves diceMesh.position independently of
+  // whatever rotation state above is also active, including the final
+  // frame that springs it back to (0,0,0) -- so it's checked and OR'd in
+  // separately rather than folded into the branches above.
+  const pullWasActive = pullState !== null;
   updatePull();
+  if (pullWasActive) dirty = true;
 
   if (frameRecording) recordFrameSample(now, dt, frameStateLabel);
 
-  renderer.render(scene, camera);
+  // Render-skip-at-rest: skip the actual GPU draw call on any frame where
+  // nothing in the scene changed (see forceRenderPending's own comment).
+  // The rAF loop above still runs every frame regardless, so a new shake
+  // or tilt is always noticed promptly -- this only skips the expensive
+  // renderer.render() call itself.
+  if (dirty || forceRenderPending) {
+    renderer.render(scene, camera);
+    forceRenderPending = false;
+  }
 }
 
 function startDiceRendering() {
