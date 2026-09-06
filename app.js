@@ -282,19 +282,20 @@ function recenterView() {
 
 recenterBtn.addEventListener("click", recenterView);
 
-// Non-random roll: an explicit opt-in that turns "shake to roll" into a
-// deterministic confirm instead of a random pick -- rollDice() lands on
-// whatever face findNearestFaceIndex() already says is facing the camera
-// (see rollDice() below), the same face pauseAndReveal() would settle on if
-// you just held still. Lets someone tilt/drag to the face they actually
-// want, then shake to commit to exactly that one instead of leaving it to
-// chance. Persisted (best-effort) so the choice survives a reload.
+// Non-random roll: on by default -- "shake to roll" is a deterministic
+// confirm rather than a random pick, landing on whatever face
+// findNearestFaceIndex() already says is facing the camera (see rollDice()
+// below), the same face pauseAndReveal() would settle on if you just held
+// still. Lets someone tilt/drag to the face they actually want, then shake
+// to commit to exactly that one. Turning it off restores true random
+// rolls. Persisted (best-effort) so the choice survives a reload.
 const NON_RANDOM_ROLL_STORAGE_KEY = "ask-ball-non-random-roll";
-let nonRandomRoll = false;
+let nonRandomRoll = true;
 try {
-  nonRandomRoll = localStorage.getItem(NON_RANDOM_ROLL_STORAGE_KEY) === "true";
+  const storedNonRandomRoll = localStorage.getItem(NON_RANDOM_ROLL_STORAGE_KEY);
+  if (storedNonRandomRoll !== null) nonRandomRoll = storedNonRandomRoll === "true";
 } catch {
-  // ignore -- private browsing / storage disabled, defaults to off
+  // ignore -- private browsing / storage disabled, defaults to on
 }
 nonRandomRollToggleEl.checked = nonRandomRoll;
 
