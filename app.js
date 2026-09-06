@@ -13,6 +13,7 @@ const escapeRingFillEl = document.getElementById("escape-ring-fill");
 const statusIconPauseEl = document.getElementById("status-icon-pause");
 const settingsToggleBtn = document.getElementById("settings-toggle");
 const settingsPanelEl = document.getElementById("settings-panel");
+const nonRandomRollToggleEl = document.getElementById("non-random-roll-toggle");
 const statTotalRollsEl = document.getElementById("stat-total-rolls");
 const statNat20El = document.getElementById("stat-nat20");
 const statNat1El = document.getElementById("stat-nat1");
@@ -280,6 +281,31 @@ function recenterView() {
 }
 
 recenterBtn.addEventListener("click", recenterView);
+
+// Non-random roll: an explicit opt-in that turns "shake to roll" into a
+// deterministic confirm instead of a random pick -- rollDice() lands on
+// whatever face findNearestFaceIndex() already says is facing the camera
+// (see rollDice() below), the same face pauseAndReveal() would settle on if
+// you just held still. Lets someone tilt/drag to the face they actually
+// want, then shake to commit to exactly that one instead of leaving it to
+// chance. Persisted (best-effort) so the choice survives a reload.
+const NON_RANDOM_ROLL_STORAGE_KEY = "ask-ball-non-random-roll";
+let nonRandomRoll = false;
+try {
+  nonRandomRoll = localStorage.getItem(NON_RANDOM_ROLL_STORAGE_KEY) === "true";
+} catch {
+  // ignore -- private browsing / storage disabled, defaults to off
+}
+nonRandomRollToggleEl.checked = nonRandomRoll;
+
+nonRandomRollToggleEl.addEventListener("change", () => {
+  nonRandomRoll = nonRandomRollToggleEl.checked;
+  try {
+    localStorage.setItem(NON_RANDOM_ROLL_STORAGE_KEY, String(nonRandomRoll));
+  } catch {
+    // ignore -- the toggle still works for this session, just won't persist
+  }
+});
 
 // Bubble-level style indicator, drawn as a dim light BEHIND the die (see
 // #level-light-layer in index.html, positioned before .dice-canvas in the
@@ -1371,7 +1397,11 @@ function rollDice(peakRotationRate, betaRate, gammaRate) {
   const intensityT = intensityFromPeakRate(peakRotationRate);
   const totalTurns = SHAKE_MIN_TURNS + intensityT * (SHAKE_MAX_TURNS - SHAKE_MIN_TURNS);
 
-  const resultIndex = Math.floor(Math.random() * 20);
+  // Non-random roll (see the toggle above) commits to whatever face is
+  // already facing the camera instead of picking a fresh random one --
+  // the same "current face" findNearestFaceIndex() reports for a
+  // pause-reveal, just triggered by a shake instead of holding still.
+  const resultIndex = nonRandomRoll ? findNearestFaceIndex() : Math.floor(Math.random() * 20);
   const cameraDir = new THREE.Vector3(0, 0, 1);
   const targetNormal = faceNormals[resultIndex].clone().normalize();
   const settleQuat = new THREE.Quaternion().setFromUnitVectors(targetNormal, cameraDir);
