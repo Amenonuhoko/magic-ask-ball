@@ -650,17 +650,44 @@ const FACE_PHRASE_ORDER = [
 // Fixed by treating this as a graph-bandwidth-minimization problem: every
 // face borders exactly 3 others (the adjacency graph is 3-regular), and we
 // want every one of those ~30 edges to connect two numbers that are close
-// together, not just consecutive numbers along one path. A breadth-first
-// layering from a fixed starting face (Cuthill-McKee-style: number each
-// face in the order a BFS from one face visits it) keeps geometric
-// neighbors numerically close throughout, cutting the worst-case gap
-// across ANY adjacent pair from 14 down to 6 -- and, as a bonus of the
-// graph's symmetry, still lands faces 1 and 20 on exact geometric
-// opposites (180deg apart), same as a real d20. Computed once offline
-// against the real geometry (see test-face-numbering.js for the
-// derivation and proof); this is just the resulting permutation.
+// together, not just consecutive numbers along one path.
+//
+// SECOND, SEPARATE constraint added after a real report ("why are there 2
+// 17 faces", later "duplicates" on a revealed "Probably no"): only ONE
+// face is ever twisted upright, so every other visible face shows at
+// whatever rotation its position leaves it at -- and "1" is drawn as a
+// bare vertical bar (see makeFaceTexture(), fixed separately for a "1
+// rotated looks like 7" bug) with nothing to mark where it starts or
+// ends. Sitting next to almost any other single digit, that bar reads as
+// the leading "1" of a two-digit number -- and because faces 10-19 are
+// all real, EVERY digit 2-9 next to "1" spells out another face that
+// genuinely exists on the die (bar+"2" next to the real "2" looked
+// exactly like a second, genuine "12" -- not a misread, an actual
+// identically-shaped duplicate of a real answer). Verified by dumping
+// every face's raw texture pixel-for-pixel (all 20 unique, confirming
+// this was never a data bug) and reproducing the exact illusion live
+// (rendering face "2" upright shows the real neighboring "1" bar sitting
+// close enough to read as "12"). No permutation can give "1" zero
+// neighbors (it always has exactly 3), so the fix is choosing which 3
+// numbers land there: this layout gives "1" only 10/11/12 as neighbors --
+// each already a self-contained two-digit face, not a bare digit "1" can
+// silently attach to.
+//
+// That constraint alone forced trading the bandwidth-minimal layout's
+// worst-case gap (6) up to 11, and the minimum possible cross-polarity
+// edges (2, see test-face-numbering.js's exhaustive proof that 0 is
+// impossible) up to 3 -- confirmed by extensive search that 0 single-
+// digit neighbors for "1" combined with the previous layout's minimums
+// isn't achievable at all. Among the many permutations tying on those
+// stats, this one was chosen for also minimizing how jarring its 3 forced
+// crossings feel (mostly-bordering-neutral pairs like 8/13, not extreme
+// swings like 4/15) -- see test-face-numbering.js. Still lands faces 1 and
+// 20 on exact geometric opposites (180deg apart) as a bonus of the graph's
+// symmetry, same as a real d20. Computed once offline against the real
+// geometry (see test-face-numbering.js and test-no-digit-illusion.js for
+// the derivation and proof); this is just the resulting permutation.
 const TRIANGLE_TO_FACE_NUMBER = [
-  1, 2, 5, 7, 3, 6, 4, 8, 13, 11, 15, 16, 19, 20, 18, 9, 10, 14, 17, 12,
+  16, 18, 15, 17, 19, 12, 11, 14, 20, 7, 10, 5, 8, 4, 2, 1, 6, 13, 9, 3,
 ];
 
 const FACES = TRIANGLE_TO_FACE_NUMBER.map((number) => ({
