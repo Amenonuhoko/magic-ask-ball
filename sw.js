@@ -1,4 +1,4 @@
-const CACHE_NAME = "ask-ball-v56";
+const CACHE_NAME = "ask-ball-v57";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -9,9 +9,16 @@ const APP_SHELL = [
   "./icons/icon-512.png",
 ];
 
+// Cross-origin, so cached best-effort: a CDN hiccup during install must not
+// stop the app shell itself from installing (the fetch handler below will
+// still pick it up on the next successful load).
+const CDN_ASSETS = ["https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"];
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
+    caches.open(CACHE_NAME).then((cache) =>
+      cache.addAll(APP_SHELL).then(() => cache.addAll(CDN_ASSETS).catch(() => {}))
+    )
   );
   self.skipWaiting();
 });

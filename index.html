@@ -16,6 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&display=swap"
     rel="stylesheet"
+    crossorigin="anonymous"
   />
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -185,6 +186,26 @@
     <p id="status" class="status">Loading…</p>
     <button id="enable-motion" class="enable-motion" hidden>Enable sensors</button>
   </main>
+  <nav id="die-picker" class="die-picker" aria-label="Die type">
+    <button type="button" class="die-btn" data-die="d4" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 21 19.5H3Z" /></svg><span>d4</span>
+    </button>
+    <button type="button" class="die-btn" data-die="d6" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="1.5" /></svg><span>d6</span>
+    </button>
+    <button type="button" class="die-btn" data-die="d8" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 20.5 12 12 21.5 3.5 12Z M3.5 12H20.5" /></svg><span>d8</span>
+    </button>
+    <button type="button" class="die-btn" data-die="d10" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 20.5 13 12 21.5 3.5 13Z M3.5 13 12 16.5 20.5 13 M12 16.5V21.5" /></svg><span>d10</span>
+    </button>
+    <button type="button" class="die-btn" data-die="d12" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 21 9 17.6 20H6.4L3 9Z" /></svg><span>d12</span>
+    </button>
+    <button type="button" class="die-btn" data-die="d20" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 20.5 7.3V16.7L12 21.5 3.5 16.7V7.3Z M12 7 16.8 15.5H7.2Z" /></svg><span>d20</span>
+    </button>
+  </nav>
   <button id="settings-toggle" class="settings-toggle" type="button" aria-label="Settings" title="Settings">⚙</button>
   <div id="settings-panel" class="settings-panel" hidden>
     <button id="recenter-btn" class="settings-btn settings-btn-primary" type="button">⌖ Recenter</button>
@@ -196,7 +217,7 @@
     </label>
 
     <div class="settings-divider"></div>
-    <div class="settings-section-label">Rolls &amp; faces</div>
+    <div class="settings-section-label">d20 rolls &amp; faces</div>
     <div class="stat-grid">
       <div class="stat-cell"><span id="stat-total-rolls" class="stat-value">0</span><span class="stat-label">Total rolls</span></div>
       <div class="stat-cell"><span id="stat-nat20" class="stat-value">0</span><span class="stat-label">Natural 20s</span></div>
@@ -233,7 +254,10 @@
     <div class="settings-divider"></div>
     <button id="stats-reset-btn" class="settings-btn" type="button">Reset stats</button>
   </div>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+  <!-- crossorigin: fetched in CORS mode so the service worker can cache it
+       (a plain no-cors fetch comes back opaque and was never cached, so
+       every cold open re-downloaded three.js). -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js" crossorigin="anonymous"></script>
   <script src="app.js"></script>
 </body>
 </html>
