@@ -50,9 +50,14 @@ setStatus("Loading…");
 //
 // devicemotion's rotationRate is also used separately (independently of
 // this filter) as an accumulating "total rotation" meter to detect a shake
-// gesture for dice rolls — see handleMotionEvent.
+// gesture for dice rolls — see processShakeSample.
 
-const GYRO_FUSION_ALPHA = 0.96; // weight on the gyro-predicted value vs. raw orientation
+// Time constant (seconds) of the complementary filter's pull back toward the
+// absolute orientation reading. Expressed as a time rather than a per-frame
+// weight so the blend behaves the same at 60Hz and 120Hz (a fixed 0.96
+// per-frame alpha corrected twice as hard on a 120Hz screen). 0.4s matches
+// the old 0.96 at 60fps.
+const GYRO_FUSION_TAU = 0.4;
 const GYRO_FRESH_WINDOW_MS = 300; // ignore stale rotationRate if devicemotion stopped firing
 const FALLBACK_TAU = 0.05; // seconds; smoothing time-constant when no gyro is available
 
@@ -68,8 +73,6 @@ let lastGyroAt = 0;
 let filteredBeta = 0;
 let filteredGamma = 0;
 let filterInitialized = false;
-
-let lastFrameAt = null;
 
 // Shake detection for dice rolls, based on TOTAL accumulated rotation
 // (gyroscope rotationRate integrated over time) rather than a single sharp
@@ -180,6 +183,27 @@ function handleOrientationEvent(event) {
   hasOrientation = true;
 }
 
+// Real devicemotion events only: these are the only samples allowed to
+// update the gyro state the fusion filter/tilt-look/pause detection read.
+// The drag listener feeds its synthetic rates straight into
+// processShakeSample() instead -- routing them through here used to make a
+// drag ALSO count as the phone physically rotating, so every drag turned the
+// die twice (once by applyDragLook(), again via the fake gyro integrated
+// into filteredBeta/Gamma and picked up by tilt-look) and kept pause
+// detection from ever seeing the phone as still.
+function handleMotionEvent(event) {
+  const rate = event.rotationRate;
+  if (rate && rate.beta !== null && rate.gamma !== null) {
+    gyroBeta = rate.beta;
+    gyroGamma = rate.gamma;
+    hasGyro = true;
+    lastGyroAt = performance.now();
+    processShakeSample(rate.beta, rate.gamma);
+  } else {
+    processShakeSample(undefined, undefined);
+  }
+}
+
 // accumulate=false (used by the drag-look pointermove listener) skips
 // adding this sample into the sustained leaky-bucket accumulator below --
 // see the call site for why: a real device shake is naturally an
@@ -191,18 +215,10 @@ function handleOrientationEvent(event) {
 // that's the intended way a hard drag launches a roll -- but spikeThreshold
 // lets the drag call site require a much harder flick than a real device
 // shake needs (see DRAG_INSTANT_SPIKE_RATE_DEG_PER_SEC).
-function handleMotionEvent(event, accumulate = true, spikeThreshold = INSTANT_SPIKE_RATE_DEG_PER_SEC) {
-  const rate = event.rotationRate;
+function processShakeSample(betaRate, gammaRate, accumulate = true, spikeThreshold = INSTANT_SPIKE_RATE_DEG_PER_SEC) {
   const now = performance.now();
-  const rateValid = !!(rate && rate.beta !== null && rate.gamma !== null);
-  const rotSpeed = rateValid ? Math.abs(rate.beta) + Math.abs(rate.gamma) : 0;
-
-  if (rateValid) {
-    gyroBeta = rate.beta;
-    gyroGamma = rate.gamma;
-    hasGyro = true;
-    lastGyroAt = now;
-  }
+  const rateValid = betaRate !== undefined;
+  const rotSpeed = rateValid ? Math.abs(betaRate) + Math.abs(gammaRate) : 0;
 
   if (lastMotionEventAt !== null) {
     const dt = Math.min((now - lastMotionEventAt) / 1000, 0.2); // clamp for irregular event gaps
@@ -223,8 +239,6 @@ function handleMotionEvent(event, accumulate = true, spikeThreshold = INSTANT_SP
 
     if (shouldFire) {
       const peak = Math.max(rotationAccumPeakRate, rotSpeed);
-      const beta = rateValid ? rate.beta : undefined;
-      const gamma = rateValid ? rate.gamma : undefined;
 
       stats.shakeSpeedSampleCount++;
       stats.shakeSpeedSampleSum += peak;
@@ -237,10 +251,10 @@ function handleMotionEvent(event, accumulate = true, spikeThreshold = INSTANT_SP
       // playing (that can only have started while held, and finishes on
       // its own regardless of whether the hold is later released).
       if (pointerHeld) {
-        rollDice(peak, beta, gamma);
+        rollDice(peak, betaRate, gammaRate);
         stats.rollTriggerCount++;
       } else if (!rolling && !settleState) {
-        pullDice(peak, beta, gamma);
+        pullDice(peak, betaRate, gammaRate);
         stats.pullTriggerCount++;
       }
       lastRollTriggerAt = now;
@@ -253,24 +267,36 @@ function handleMotionEvent(event, accumulate = true, spikeThreshold = INSTANT_SP
   lastMotionEventAt = now;
 }
 
-function stepFilter(dt) {
-  const gyroFresh = hasGyro && performance.now() - lastGyroAt < GYRO_FRESH_WINDOW_MS;
-
-  if (gyroFresh) {
-    const predictedBeta = filteredBeta + gyroBeta * dt;
-    const predictedGamma = filteredGamma + gyroGamma * dt;
-    filteredBeta = GYRO_FUSION_ALPHA * predictedBeta + (1 - GYRO_FUSION_ALPHA) * rawBeta;
-    filteredGamma = GYRO_FUSION_ALPHA * predictedGamma + (1 - GYRO_FUSION_ALPHA) * rawGamma;
-  } else {
-    const k = 1 - Math.exp(-dt / FALLBACK_TAU);
-    filteredBeta += (rawBeta - filteredBeta) * k;
-    filteredGamma += (rawGamma - filteredGamma) * k;
-  }
+// Shortest signed difference between two angles in degrees. beta wraps at
+// +/-180, so a plain subtraction across that seam reads as a ~360deg jump
+// and would yank the filter (and everything derived from it) the long way
+// round.
+function angleDiffDeg(to, from) {
+  return ((((to - from) % 360) + 540) % 360) - 180;
 }
 
-// Now that tilt/drag can freely rotate the die to look around every side
-// (see updateTiltLook()/applyDragLook()) with no auto-snap-back, there's no
-// longer a fixed "zero" to return to on its own -- so Recenter is
+function isGyroFresh(now) {
+  return hasGyro && now - lastGyroAt < GYRO_FRESH_WINDOW_MS;
+}
+
+function stepFilter(now, dt) {
+  if (isGyroFresh(now)) {
+    const correction = 1 - Math.exp(-dt / GYRO_FUSION_TAU);
+    filteredBeta += gyroBeta * dt;
+    filteredGamma += gyroGamma * dt;
+    filteredBeta += angleDiffDeg(rawBeta, filteredBeta) * correction;
+    filteredGamma += (rawGamma - filteredGamma) * correction;
+  } else {
+    const k = 1 - Math.exp(-dt / FALLBACK_TAU);
+    filteredBeta += angleDiffDeg(rawBeta, filteredBeta) * k;
+    filteredGamma += (rawGamma - filteredGamma) * k;
+  }
+  filteredBeta = angleDiffDeg(filteredBeta, 0); // keep in [-180, 180)
+}
+
+// Before the first result, tilt/drag freely rotate the die to look around
+// every side (see updateTiltLook()/applyDragLook()) with no fixed "zero"
+// to return to on its own -- so Recenter is
 // repurposed from "recalibrate the tilt sensor's zero-point" to "jump back
 // to the last settled result" (restQuaternion, updated in finishRoll()),
 // giving you a quick way back after looking around.
@@ -332,7 +358,7 @@ let lastLevelLightCy = null;
 
 function updateLevelLight() {
   const nx = Math.max(-1, Math.min(1, (filteredGamma - frozenZeroGamma) / TILT_VISUAL_RANGE_DEG));
-  const ny = Math.max(-1, Math.min(1, (filteredBeta - frozenZeroBeta) / TILT_VISUAL_RANGE_DEG));
+  const ny = Math.max(-1, Math.min(1, angleDiffDeg(filteredBeta, frozenZeroBeta) / TILT_VISUAL_RANGE_DEG));
   const cx = 50 + nx * LEVEL_LIGHT_OFFSET_RANGE;
   const cy = 50 + ny * LEVEL_LIGHT_OFFSET_RANGE;
   if (
@@ -349,10 +375,9 @@ function updateLevelLight() {
 }
 
 function updatePauseDetection(now, dt) {
-  const gyroFresh = hasGyro && now - lastGyroAt < GYRO_FRESH_WINDOW_MS;
-  const deviceSpeed = gyroFresh
+  const deviceSpeed = isGyroFresh(now)
     ? Math.hypot(gyroBeta, gyroGamma)
-    : Math.hypot(filteredBeta - prevPauseBeta, filteredGamma - prevPauseGamma) / dt;
+    : Math.hypot(angleDiffDeg(filteredBeta, prevPauseBeta), filteredGamma - prevPauseGamma) / dt;
   prevPauseBeta = filteredBeta;
   prevPauseGamma = filteredGamma;
 
@@ -393,19 +418,13 @@ function updatePauseDetection(now, dt) {
   }
 }
 
-function frame(now) {
-  requestAnimationFrame(frame);
-  if (!hasOrientation) return;
-
-  if (lastFrameAt === null) {
-    lastFrameAt = now;
-    return;
-  }
-  const dt = Math.min((now - lastFrameAt) / 1000, 0.1); // clamp for tab-switch pauses
-  lastFrameAt = now;
-
-  stepFilter(dt);
-
+// Runs at the top of diceFrame() rather than in its own requestAnimationFrame
+// loop: with two separate loops the dice loop (registered first) always
+// read the PREVIOUS frame's filtered orientation, adding a full frame of
+// latency to every tilt.
+function updateSensors(now, dt) {
+  if (!hasOrientation || dt <= 0) return;
+  stepFilter(now, dt);
   updateLevelLight();
   updatePauseDetection(now, dt);
 }
@@ -413,7 +432,6 @@ function frame(now) {
 function startListening() {
   window.addEventListener("deviceorientation", handleOrientationEvent);
   window.addEventListener("devicemotion", handleMotionEvent);
-  requestAnimationFrame(frame);
 }
 
 async function requestSensorPermissions() {
@@ -531,7 +549,14 @@ function recordDragSpeedSample(speedDegPerSec) {
   stats.dragSpeedSampleCount++;
   stats.dragSpeedSampleSum += speedDegPerSec;
   if (speedDegPerSec > stats.dragSpeedPeak) stats.dragSpeedPeak = speedDegPerSec;
-  renderStatsPanel();
+  // Only the drag readouts change here -- not worth rebuilding the whole
+  // panel (including the 20-row face table) on every pointermove.
+  if (!settingsPanelEl.hidden) renderDragStats();
+}
+
+function renderDragStats() {
+  statDragAvgEl.textContent = formatSpeed(stats.dragSpeedSampleSum, stats.dragSpeedSampleCount);
+  statDragPeakEl.textContent = formatPeakSpeed(stats.dragSpeedPeak);
 }
 
 function formatSpeed(sum, count) {
@@ -576,8 +601,7 @@ function renderStatsPanel() {
     })
     .join("");
 
-  statDragAvgEl.textContent = formatSpeed(stats.dragSpeedSampleSum, stats.dragSpeedSampleCount);
-  statDragPeakEl.textContent = formatPeakSpeed(stats.dragSpeedPeak);
+  renderDragStats();
 
   statShakeAvgEl.textContent = formatSpeed(stats.shakeSpeedSampleSum, stats.shakeSpeedSampleCount);
   statShakePeakEl.textContent = formatPeakSpeed(stats.shakeSpeedPeak);
@@ -733,7 +757,6 @@ let camera = null;
 let diceMesh = null;
 let faceNormals = null;
 let faceUpVectors = null;
-let diceRafId = null;
 
 // Render-skip-at-rest: diceFrame() runs requestAnimationFrame continuously
 // no matter what (cheap -- it's the only way to promptly notice a shake or
@@ -775,7 +798,33 @@ const SETTLE_DURATION_MS = 650; // softened: was 450, paired with a gentler easi
 // above the pause threshold guarantees "the phone counts as still" means
 // the same thing everywhere: nothing can drift once pause-detection would
 // also call it still.
-const TILT_LOOK_DEADZONE_DEG_PER_SEC = 15;
+//
+// The deadzone is a soft ramp rather than a hard cutoff: below
+// TILT_LOOK_DEADZONE_LOW_DEG_PER_SEC the die ignores the phone entirely (the
+// invariant above), above TILT_LOOK_DEADZONE_HIGH_DEG_PER_SEC it follows
+// 1:1, and in between the follow gain eases up smoothly. A hard cutoff made
+// a slow turn hovering around the threshold stutter between "frozen" and
+// "full 1:1" frame to frame, which read as a loose, notchy control.
+const TILT_LOOK_DEADZONE_LOW_DEG_PER_SEC = PAUSE_STILL_THRESHOLD_DEG_PER_SEC;
+const TILT_LOOK_DEADZONE_HIGH_DEG_PER_SEC = 26;
+
+// Locked-in result: once a roll or pause-reveal settles, the die stays on
+// its face rather than following the phone 1:1. All it does is lean a
+// little with the phone's tilt, so it still feels like a physical object:
+// LOCK_PARALLAX_GAIN of the tilt, capped at LOCK_PARALLAX_MAX_DEG. That lean
+// is measured against a reference that slowly follows the phone
+// (LOCK_REF_RECENTER_TAU), so holding the phone at a new angle eases the
+// die back to dead-on instead of leaving it leaning forever.
+// Pressing and holding the screen again unlocks a full look-around (see
+// lookUnlocked); letting go eases the die back onto the locked face
+// (LOCK_FOLLOW_TAU).
+const LOCK_PARALLAX_GAIN = 0.12;
+const LOCK_PARALLAX_MAX_DEG = 6;
+const LOCK_REF_RECENTER_TAU = 2.5; // seconds
+const LOCK_FOLLOW_TAU = 0.1; // seconds
+const LOCK_REST_EPSILON_RAD = 1e-3; // ~0.06deg: closer than this counts as "at rest", no render needed
+const LOCKED_PULL_SCALE = 0.35; // a denied (not-held) shake barely nudges a locked die
+const DEG2RAD = Math.PI / 180;
 
 // Pausing (the phone going physically still — see updatePauseDetection)
 // snaps the die onto whichever face is currently nearest the camera and
@@ -787,11 +836,17 @@ const TILT_LOOK_DEADZONE_DEG_PER_SEC = 15;
 let frozen = false;
 let frozenZeroBeta = 0;
 let frozenZeroGamma = 0;
+// True only while a hold that STARTED after the die locked is still down --
+// holding straight through a roll (you have to hold to shake-roll) must not
+// leave the fresh result free-spinning with every hand movement.
+let lookUnlocked = false;
+let lockRefBeta = 0;
+let lockRefGamma = 0;
 
-// The last settled result's orientation, updated in finishRoll(). Tilt and
-// drag can freely rotate the die to look around every side with no auto-
-// snap-back (see updateTiltLook()/applyDragLook()), so this is what the
-// Recenter button jumps back to. Starts at identity -- before any result
+// The last settled result's orientation, updated in finishRoll(). A locked
+// die leans around this and eases back onto it after a look-around hold
+// (see updateLockedPose()); it's also what the Recenter button jumps back
+// to. Starts at identity -- before any result
 // has ever been shown, there's nothing else meaningful to recenter to.
 const restQuaternion = new THREE.Quaternion();
 let settleState = null;
@@ -1080,63 +1135,106 @@ function resizeDiceRenderer() {
 
 window.addEventListener("resize", resizeDiceRenderer);
 
-// Scratch vector/quaternion, reused every frame instead of allocating
-// fresh THREE objects on this hot 60fps path.
-const tiltLookScratchAxis = new THREE.Vector3();
-const tiltLookScratchQuat = new THREE.Quaternion();
+// Scratch objects, reused every frame instead of allocating fresh THREE
+// objects on this hot 60fps path.
+const lookScratchAxis = new THREE.Vector3();
+const lookScratchQuat = new THREE.Quaternion();
+const lockTargetQuat = new THREE.Quaternion();
 
-// Tracks the phone's own orientation as of the last tick this ran, so each
-// call only has to apply the CHANGE since then -- not an absolute tilt
-// value the way the old idle spin worked. null until the first real tick
-// (can't take a delta against nothing).
+// Rotates the die in world space (premultiply) so "turn the phone right"
+// always turns the die the same screen-space direction regardless of its
+// current orientation. Both axes are combined into ONE rotation --
+// composing two separate single-axis rotations is order-dependent, since
+// rotations don't commute. Renormalized every call so repeated
+// premultiplication can't drift off the unit sphere.
+function rotateDieWorld(betaDeg, gammaDeg) {
+  const angleDeg = Math.hypot(betaDeg, gammaDeg);
+  if (angleDeg === 0) return;
+  lookScratchAxis.set(betaDeg / angleDeg, gammaDeg / angleDeg, 0);
+  lookScratchQuat.setFromAxisAngle(lookScratchAxis, angleDeg * DEG2RAD);
+  diceMesh.quaternion.premultiply(lookScratchQuat).normalize();
+}
+
+function smoothstep(edge0, edge1, x) {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+// How far the phone itself turned since the previous dice frame, sampled
+// EVERY frame (see diceFrame()) whether or not anything uses it. It used to
+// only be sampled inside updateTiltLook(), which is skipped during a roll or
+// settle -- so the first frame after a roll landed applied the entire
+// shake's worth of accumulated rotation in one jump. Prefers the gyro's own
+// rate when fresh: it's the lowest-latency signal, and look-around is
+// relative so gyro drift doesn't matter here. Falls back to the filtered
+// orientation's change otherwise.
 let lastTiltLookBeta = null;
 let lastTiltLookGamma = null;
+let tiltDeltaBeta = 0;
+let tiltDeltaGamma = 0;
+
+function sampleTiltDelta(now, dt) {
+  tiltDeltaBeta = 0;
+  tiltDeltaGamma = 0;
+  if (!hasOrientation) return;
+  if (isGyroFresh(now)) {
+    tiltDeltaBeta = gyroBeta * dt;
+    tiltDeltaGamma = gyroGamma * dt;
+  } else if (lastTiltLookBeta !== null) {
+    tiltDeltaBeta = angleDiffDeg(filteredBeta, lastTiltLookBeta);
+    tiltDeltaGamma = filteredGamma - lastTiltLookGamma;
+  }
+  lastTiltLookBeta = filteredBeta;
+  lastTiltLookGamma = filteredGamma;
+}
 
 // Returns whether it actually rotated the die this frame -- diceFrame()
 // uses that to decide whether the scene is dirty and needs a real render,
 // so a phone held rock-steady (nothing but sensor noise) doesn't force a
 // GPU draw call every single frame for no visible change.
 function updateTiltLook(dt) {
-  if (rolling || !diceMesh) return false;
+  if (dt <= 0) return false;
+  // A rate-based deadzone (not an absolute-angle one): ignores sensor
+  // jitter while genuinely still, but never blocks real movement
+  // regardless of how far from "zero" the phone is currently held -- there
+  // IS no zero here, only how much you're turning it right now, which is
+  // exactly what makes holding a tilt hold a fixed view.
+  const rateDegPerSec = Math.hypot(tiltDeltaBeta, tiltDeltaGamma) / dt;
+  const gain = smoothstep(TILT_LOOK_DEADZONE_LOW_DEG_PER_SEC, TILT_LOOK_DEADZONE_HIGH_DEG_PER_SEC, rateDegPerSec);
+  if (gain === 0) return false;
+  rotateDieWorld(tiltDeltaBeta * gain, tiltDeltaGamma * gain); // 1:1 with the phone once past the ramp
+  return true;
+}
 
-  if (lastTiltLookBeta === null) {
-    lastTiltLookBeta = filteredBeta;
-    lastTiltLookGamma = filteredGamma;
-    return false;
+function lockIn() {
+  frozen = true;
+  lookUnlocked = false;
+  lockRefBeta = filteredBeta;
+  lockRefGamma = filteredGamma;
+}
+
+// The locked pose: restQuaternion plus a small, capped lean with the
+// phone's tilt (see LOCK_PARALLAX_GAIN). Eases toward it rather than
+// snapping, which is also what glides the die back onto its face after a
+// look-around hold is released. Returns whether the die moved.
+function updateLockedPose(dt) {
+  const recenter = 1 - Math.exp(-dt / LOCK_REF_RECENTER_TAU);
+  lockRefBeta += angleDiffDeg(filteredBeta, lockRefBeta) * recenter;
+  lockRefGamma += (filteredGamma - lockRefGamma) * recenter;
+
+  const leanBeta = angleDiffDeg(filteredBeta, lockRefBeta) * LOCK_PARALLAX_GAIN;
+  const leanGamma = (filteredGamma - lockRefGamma) * LOCK_PARALLAX_GAIN;
+  const leanDeg = Math.hypot(leanBeta, leanGamma);
+  lockTargetQuat.copy(restQuaternion);
+  if (leanDeg > 0) {
+    const cappedDeg = Math.min(leanDeg, LOCK_PARALLAX_MAX_DEG);
+    lookScratchAxis.set(leanBeta / leanDeg, leanGamma / leanDeg, 0);
+    lookScratchQuat.setFromAxisAngle(lookScratchAxis, cappedDeg * DEG2RAD);
+    lockTargetQuat.premultiply(lookScratchQuat);
   }
 
-  const deltaBeta = filteredBeta - lastTiltLookBeta;
-  const deltaGamma = filteredGamma - lastTiltLookGamma;
-  lastTiltLookBeta = filteredBeta;
-  lastTiltLookGamma = filteredGamma;
-  if (dt <= 0) return false;
-
-  // A rate-based deadzone (not an absolute-angle one, unlike the old idle
-  // spin): ignores sensor jitter while genuinely still, but never blocks
-  // real movement regardless of how far from "zero" the phone is currently
-  // held -- there IS no zero here, only how much you're turning it right
-  // now, which is exactly what makes holding a tilt hold a fixed view.
-  const rateDegPerSec = Math.hypot(deltaBeta, deltaGamma) / dt;
-  if (rateDegPerSec < TILT_LOOK_DEADZONE_DEG_PER_SEC) return false;
-
-  // Both axes combined into ONE rotation (same reasoning as the old idle
-  // spin fix: composing two separate single-axis rotations is order-
-  // dependent and frame-rate dependent, since rotations don't commute).
-  // Here it's simpler still -- each tick applies the ACTUAL measured
-  // change directly, so there's no velocity to integrate or step-size to
-  // depend on: the total rotation over any stretch of real time is just
-  // the sum of the real deltas, however finely diceFrame() happens to
-  // sample them.
-  tiltLookScratchAxis.set(deltaBeta, deltaGamma, 0).normalize();
-  const angleRad = (Math.hypot(deltaBeta, deltaGamma) * Math.PI) / 180; // 1:1 with the phone's own rotation
-  const q = tiltLookScratchQuat.setFromAxisAngle(tiltLookScratchAxis, angleRad);
-  // Compose in world space (premultiply) so "turn the phone right" always
-  // turns the die the same screen-space direction regardless of its
-  // current orientation.
-  diceMesh.quaternion.premultiply(q);
-  // Repeated premultiplication accumulates floating-point error over many
-  // frames; renormalize every frame so it can't drift off the unit sphere.
-  diceMesh.quaternion.normalize();
+  if (diceMesh.quaternion.angleTo(lockTargetQuat) < LOCK_REST_EPSILON_RAD) return false;
+  diceMesh.quaternion.slerp(lockTargetQuat, 1 - Math.exp(-dt / LOCK_FOLLOW_TAU));
   return true;
 }
 
@@ -1151,47 +1249,59 @@ function updateTiltLook(dt) {
 // independent: this is purely visual, the accumulator is purely about
 // triggering a result.
 const DRAG_LOOK_DEG_PER_PX = 0.35;
-const dragLookScratchAxis = new THREE.Vector3();
-const dragLookScratchQuat = new THREE.Quaternion();
 
 function applyDragLook(dx, dy) {
-  if (!diceMesh || rolling || settleState) return;
+  if (!diceMesh || rolling || settleState || (frozen && !lookUnlocked)) return;
   if (dx === 0 && dy === 0) return;
   // Same axis convention as updateTiltLook(): horizontal movement turns
   // the die around the vertical axis, vertical movement around the
   // horizontal axis.
-  const deltaGamma = dx * DRAG_LOOK_DEG_PER_PX;
-  const deltaBeta = dy * DRAG_LOOK_DEG_PER_PX;
-  dragLookScratchAxis.set(deltaBeta, deltaGamma, 0).normalize();
-  const angleRad = (Math.hypot(deltaBeta, deltaGamma) * Math.PI) / 180;
-  const q = dragLookScratchQuat.setFromAxisAngle(dragLookScratchAxis, angleRad);
-  diceMesh.quaternion.premultiply(q);
-  diceMesh.quaternion.normalize();
+  rotateDieWorld(dy * DRAG_LOOK_DEG_PER_PX, dx * DRAG_LOOK_DEG_PER_PX);
   forceRenderPending = true; // runs outside diceFrame()'s own dirty tracking
 }
 
 // Purely a visual readout of how far you've tilted since the die came to
 // rest — no threshold, tilting never resumes spinning on its own. Only a
 // held-and-shaken roll does that.
-function updateFrozenFill() {
-  const deltaBeta = filteredBeta - frozenZeroBeta;
-  const deltaGamma = filteredGamma - frozenZeroGamma;
-  const progress = Math.min(Math.hypot(deltaBeta, deltaGamma) / TILT_VISUAL_RANGE_DEG, 1);
+let lastEscapeFillHeight = 0;
 
-  // Fills vertically (bottom to top) rather than sweeping around the
-  // circumference: a rect clipped to the circle grows from the bottom.
-  const fillHeight = progress * 100;
-  escapeRingFillEl.setAttribute("height", String(fillHeight));
-  escapeRingFillEl.setAttribute("y", String(100 - fillHeight));
+// Fills vertically (bottom to top) rather than sweeping around the
+// circumference: a rect clipped to the circle grows from the bottom.
+// Rounded to 0.1 of the 0-100 viewBox and skipped when unchanged, so a
+// steady phone doesn't force an SVG style/paint pass every frame.
+function setEscapeFill(height) {
+  const rounded = Math.round(height * 10) / 10;
+  if (rounded === lastEscapeFillHeight) return;
+  lastEscapeFillHeight = rounded;
+  escapeRingFillEl.setAttribute("height", String(rounded));
+  escapeRingFillEl.setAttribute("y", String(100 - rounded));
 }
 
+function updateFrozenFill() {
+  const deltaBeta = angleDiffDeg(filteredBeta, frozenZeroBeta);
+  const deltaGamma = filteredGamma - frozenZeroGamma;
+  setEscapeFill(Math.min(Math.hypot(deltaBeta, deltaGamma) / TILT_VISUAL_RANGE_DEG, 1) * 100);
+}
+
+// A new roll/reveal cycle outlives any fanfare held from a previous
+// natural 1/20 -- otherwise a stale glow could linger and misleadingly
+// suggest the CURRENT face is still critical after settling onto a
+// different one.
+function clearResultCues() {
+  viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
+  sigilLayerEl.style.setProperty("--sigil-glow", "0");
+  sigilLayerEl.style.setProperty("--sigil-glow-red", "0");
+  setEscapeFill(0);
+}
+
+const CAMERA_DIR = new THREE.Vector3(0, 0, 1);
+const faceScratchNormal = new THREE.Vector3();
+
 function findNearestFaceIndex() {
-  const cameraDir = new THREE.Vector3(0, 0, 1);
   let bestIndex = 0;
   let bestDot = -Infinity;
   for (let i = 0; i < faceNormals.length; i++) {
-    const worldNormal = faceNormals[i].clone().applyQuaternion(diceMesh.quaternion);
-    const dot = worldNormal.dot(cameraDir);
+    const dot = faceScratchNormal.copy(faceNormals[i]).applyQuaternion(diceMesh.quaternion).dot(CAMERA_DIR);
     if (dot > bestDot) {
       bestDot = dot;
       bestIndex = i;
@@ -1208,14 +1318,7 @@ function findNearestFaceIndex() {
 function pauseAndReveal() {
   if (!diceMesh) return;
   rollState = null;
-
-  // A new reveal cycle starting outlives any fanfare held from a previous
-  // natural 1/20 -- otherwise a stale glow could linger and misleadingly
-  // suggest the CURRENT face is still critical after settling onto a
-  // different one.
-  viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
-  sigilLayerEl.style.setProperty("--sigil-glow", "0");
-  sigilLayerEl.style.setProperty("--sigil-glow-red", "0");
+  clearResultCues();
 
   // Recalibrate the "level" reference right now, not after the settle
   // animation finishes — the moment you pause is what defines the new
@@ -1223,11 +1326,8 @@ function pauseAndReveal() {
   // instantly rather than lagging ~300ms behind the pause.
   frozenZeroBeta = filteredBeta;
   frozenZeroGamma = filteredGamma;
-  escapeRingFillEl.setAttribute("height", "0");
-  escapeRingFillEl.setAttribute("y", "100");
 
   const nearestIndex = findNearestFaceIndex();
-  const cameraDir = new THREE.Vector3(0, 0, 1);
   const targetNormalLocal = faceNormals[nearestIndex].clone().normalize();
   // setFromUnitVectors(local, camera) alone would compute a fresh
   // "canonical" orientation from scratch, discarding whatever roll the die
@@ -1238,13 +1338,13 @@ function pauseAndReveal() {
   // current orientation, so the snap is minimal and preserves roll.
   const currentQuat = diceMesh.quaternion.clone();
   const currentWorldNormal = targetNormalLocal.clone().applyQuaternion(currentQuat);
-  const correctionQuat = new THREE.Quaternion().setFromUnitVectors(currentWorldNormal, cameraDir);
+  const correctionQuat = new THREE.Quaternion().setFromUnitVectors(currentWorldNormal, CAMERA_DIR);
   const alignedQuat = correctionQuat.multiply(currentQuat);
   // On top of that minimal correction, twist around the camera axis so the
   // revealed number reads upright — locking always straightens the number,
   // even though the face-alignment step above deliberately preserves
   // whatever roll the die happened to have.
-  const twist = uprightTwist(faceUpVectors[nearestIndex], alignedQuat, cameraDir);
+  const twist = uprightTwist(faceUpVectors[nearestIndex], alignedQuat, CAMERA_DIR);
   const finalQuat = twist.multiply(alignedQuat);
 
   settleState = {
@@ -1269,7 +1369,7 @@ function updateSettle() {
     // The level/escape-threshold reference was already recalibrated back in
     // pauseAndReveal(); just start the "resting" state now that the visual
     // settle has actually finished.
-    frozen = true;
+    lockIn();
   }
 }
 
@@ -1277,7 +1377,7 @@ function updateSettle() {
 // for actual buttons — clicks on those should behave normally and not also
 // arm the roll gate. Holding down doesn't reveal or move the die by
 // itself; it only determines whether a shake that happens while held can
-// actually roll it (see handleMotionEvent) — reflected live by the
+// actually roll it (see processShakeSample) — reflected live by the
 // viewfinder's corner brackets (see .is-held in style.css), which double
 // as the lock indicator rather than a separate icon.
 function isInteractiveElement(target) {
@@ -1308,7 +1408,7 @@ function setPointerHeld(held) {
 // shaking the phone, for anyone on a device without a working
 // gyroscope/orientation sensor (desktop, denied permission) or who just
 // prefers touch. Feeds the drag's own speed/direction into the EXACT same
-// handleMotionEvent() pipeline a real device shake uses -- same
+// processShakeSample() pipeline a real device shake uses -- same
 // accumulator, same redirect threshold, same direction-driven spin axis --
 // rather than a separate roll path, so dragging genuinely IS "shaking it"
 // as far as the roll logic is concerned, not a lookalike. The one
@@ -1323,7 +1423,7 @@ let dragLastX = null;
 let dragLastY = null;
 let dragLastT = null;
 // Screen-space px/s of drag speed -> synthetic deg/s of "rotation rate",
-// fed to handleMotionEvent() with accumulate=false (see the call site) --
+// fed to processShakeSample() with accumulate=false (see the call site) --
 // so this only ever matters for the instant-spike check (against
 // DRAG_INSTANT_SPIKE_RATE_DEG_PER_SEC, not the real-shake threshold),
 // never the sustained accumulator. Tuned so a brisk flick (a few hundred
@@ -1337,27 +1437,27 @@ document.addEventListener("pointerdown", (event) => {
   if (isInteractiveElement(event.target)) return;
   event.preventDefault();
   setPointerHeld(true);
+  // A fresh press on a locked result unlocks a full look-around for as long
+  // as it's held (see lookUnlocked).
+  if (frozen) lookUnlocked = true;
   dragLastX = event.clientX;
   dragLastY = event.clientY;
   dragLastT = performance.now();
 });
 
-document.addEventListener("pointerup", () => {
+// Stats (including drag samples) are checkpointed by setPointerHeld(false)
+// ending the hold, rather than on every pointermove sample.
+function handlePointerRelease() {
   setPointerHeld(false);
+  lookUnlocked = false; // a locked die eases back onto its face (see updateLockedPose())
   dragLastX = null;
   dragLastY = null;
   dragLastT = null;
   liveDragSpeedDegPerSec = null;
-  saveStats(); // checkpoint here rather than on every pointermove sample
-});
-document.addEventListener("pointercancel", () => {
-  setPointerHeld(false);
-  dragLastX = null;
-  dragLastY = null;
-  dragLastT = null;
-  liveDragSpeedDegPerSec = null;
-  saveStats();
-});
+}
+
+document.addEventListener("pointerup", handlePointerRelease);
+document.addEventListener("pointercancel", handlePointerRelease);
 
 document.addEventListener("pointermove", (event) => {
   if (!pointerHeld || dragLastX === null) return;
@@ -1390,11 +1490,7 @@ document.addEventListener("pointermove", (event) => {
   // PER_SEC -- a deliberately higher bar than a real device shake needs,
   // since a slow hold-and-drag to view faces can otherwise throw one noisy
   // rate sample past a lower bar) can still launch or redirect one.
-  handleMotionEvent(
-    { rotationRate: { beta: betaRate, gamma: gammaRate } },
-    false,
-    DRAG_INSTANT_SPIKE_RATE_DEG_PER_SEC
-  );
+  processShakeSample(betaRate, gammaRate, false, DRAG_INSTANT_SPIKE_RATE_DEG_PER_SEC);
 }, { passive: true }); // never calls preventDefault -- touch-action:none already owns gesture handling
 
 // A harder/faster shake spins the die faster: the peak rotation rate seen
@@ -1440,15 +1536,12 @@ function rollDice(peakRotationRate, betaRate, gammaRate) {
   frozen = false;
   settleState = null; // a shake mid-reveal takes priority; don't let it resume stale later
   rolling = true;
+  lookUnlocked = false;
   diceAnswerEl.textContent = "Rolling…";
+  diceAnswerEl.classList.remove("is-revealed");
+  diceAnswerEl.classList.add("is-veiled");
   statusIconPauseEl.setAttribute("hidden", "");
-  // A new roll outlives any fanfare held from the previous result -- see
-  // the same reasoning in pauseAndReveal().
-  viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
-  sigilLayerEl.style.setProperty("--sigil-glow", "0");
-  sigilLayerEl.style.setProperty("--sigil-glow-red", "0");
-  escapeRingFillEl.setAttribute("height", "0");
-  escapeRingFillEl.setAttribute("y", "100");
+  clearResultCues();
 
   const intensityT = intensityFromPeakRate(peakRotationRate);
   const totalTurns = SHAKE_MIN_TURNS + intensityT * (SHAKE_MAX_TURNS - SHAKE_MIN_TURNS);
@@ -1458,14 +1551,13 @@ function rollDice(peakRotationRate, betaRate, gammaRate) {
   // the same "current face" findNearestFaceIndex() reports for a
   // pause-reveal, just triggered by a shake instead of holding still.
   const resultIndex = nonRandomRoll ? findNearestFaceIndex() : Math.floor(Math.random() * 20);
-  const cameraDir = new THREE.Vector3(0, 0, 1);
   const targetNormal = faceNormals[resultIndex].clone().normalize();
-  const settleQuat = new THREE.Quaternion().setFromUnitVectors(targetNormal, cameraDir);
+  const settleQuat = new THREE.Quaternion().setFromUnitVectors(targetNormal, CAMERA_DIR);
   // Twist around the camera axis to land the number upright, rather than
   // the arbitrary/random angle this used to settle at — the spin animation
   // itself still looks dynamic (driven by spinAxis/totalTurns below), only
   // the final resting orientation is now fixed to always read upright.
-  const twist = uprightTwist(faceUpVectors[resultIndex], settleQuat, cameraDir);
+  const twist = uprightTwist(faceUpVectors[resultIndex], settleQuat, CAMERA_DIR);
   const finalQuat = twist.multiply(settleQuat);
 
   rollState = {
@@ -1489,8 +1581,8 @@ function updateRoll() {
     const t = Math.min((now - rollState.startAt) / SPIN_DURATION_MS, 1);
     const eased = easeOutCubic(t);
     const angle = eased * rollState.totalTurns * Math.PI * 2;
-    const q = new THREE.Quaternion().setFromAxisAngle(rollState.spinAxis, angle);
-    diceMesh.quaternion.copy(rollState.spinStartQuat).premultiply(q);
+    lookScratchQuat.setFromAxisAngle(rollState.spinAxis, angle);
+    diceMesh.quaternion.copy(rollState.spinStartQuat).premultiply(lookScratchQuat);
 
     if (t >= 1) {
       rollState.phase = "settle";
@@ -1514,14 +1606,14 @@ function updateRoll() {
     // reference now too, for the same reason pauseAndReveal() does: so the
     // resting-tilt fill and level light both start from zero instead of
     // measuring drift from a stale, possibly long-past reference.
-    frozen = true;
+    lockIn();
     frozenZeroBeta = filteredBeta;
     frozenZeroGamma = filteredGamma;
   }
 }
 
 // A shake that happens while NOT held can't roll the die (see
-// handleMotionEvent) — instead it "pulls" the die a short distance toward
+// processShakeSample) — instead it "pulls" the die a short distance toward
 // the shake's direction and springs it back, a felt-but-denied cue with no
 // rotation and no new result. Purely a position offset (diceMesh.position),
 // entirely independent of whatever rotation state (tilt-look/frozen/roll)
@@ -1536,7 +1628,8 @@ function pullDice(peakRotationRate, betaRate, gammaRate) {
   if (!diceMesh) return;
 
   const intensityT = intensityFromPeakRate(peakRotationRate);
-  const distance = PULL_DISTANCE_MIN + intensityT * (PULL_DISTANCE_MAX - PULL_DISTANCE_MIN);
+  const distance =
+    (PULL_DISTANCE_MIN + intensityT * (PULL_DISTANCE_MAX - PULL_DISTANCE_MIN)) * (frozen ? LOCKED_PULL_SCALE : 1);
 
   // Same axis convention as tilt/shake elsewhere: gamma (left/right) ->
   // screen X, beta (front/back) -> screen Y (inverted, since a positive
@@ -1637,6 +1730,11 @@ function finishRoll(index, revealedByPause) {
   restQuaternion.copy(diceMesh.quaternion); // what Recenter jumps back to after looking around
   const faceNumber = FACES[index].number;
   diceAnswerEl.textContent = FACES[index].phrase;
+  // Restart the "materialise out of the mist" reveal (see .is-revealed in
+  // style.css); the reflow makes re-adding the class replay it.
+  diceAnswerEl.classList.remove("is-veiled", "is-revealed");
+  void diceAnswerEl.offsetWidth;
+  diceAnswerEl.classList.add("is-revealed");
   sigilLayerEl.style.setProperty("--sigil-glow", String(affirmativeIntensity(faceNumber)));
   sigilLayerEl.style.setProperty("--sigil-glow-red", String(negativeIntensity(faceNumber)));
 
@@ -1675,8 +1773,26 @@ function finishRoll(index, revealedByPause) {
   }
 }
 
+// The viewfinder frame itself is always visible; only its color cues
+// whether the die is currently frozen showing a revealed result (a
+// separate concept from the lock icon, which reflects pointerHeld). The
+// stage's is-locked/is-rolling drive the scrying-glass ambience in
+// style.css. Packed into one bitmask and only written on change -- these
+// used to be re-toggled every single frame.
+let lastVisualStateMask = -1;
+
+function syncVisualState() {
+  const locked = frozen && !lookUnlocked;
+  const mask = (frozen ? 1 : 0) | (locked ? 2 : 0) | (rolling ? 4 : 0);
+  if (mask === lastVisualStateMask) return;
+  lastVisualStateMask = mask;
+  viewfinderEl.classList.toggle("is-frozen", frozen);
+  stageEl.classList.toggle("is-locked", locked);
+  stageEl.classList.toggle("is-rolling", rolling);
+}
+
 function diceFrame(now) {
-  diceRafId = requestAnimationFrame(diceFrame);
+  requestAnimationFrame(diceFrame);
 
   if (lastDiceFrameAt === null) {
     lastDiceFrameAt = now;
@@ -1684,10 +1800,9 @@ function diceFrame(now) {
   const dt = Math.min((now - lastDiceFrameAt) / 1000, 0.1); // clamp for tab-switch pauses
   lastDiceFrameAt = now;
 
-  // The viewfinder frame itself is always visible; only its color cues
-  // whether the die is currently frozen showing a revealed result (a
-  // separate concept from the lock icon, which reflects pointerHeld).
-  viewfinderEl.classList.toggle("is-frozen", frozen);
+  updateSensors(now, dt);
+  sampleTiltDelta(now, dt);
+  syncVisualState();
 
   let dirty;
   if (rollState) {
@@ -1697,12 +1812,12 @@ function diceFrame(now) {
     updateSettle();
     dirty = true;
   } else if (frozen) {
-    // Look-around (tilt/drag) still works while frozen showing a result --
-    // that's the whole point: inspect every side of what you rolled. Only
-    // updateFrozenFill() is skipped from the dirty check itself since it
-    // only ever touches the SVG ring, never the 3D scene.
+    // Locked on the result: only a small lean with the phone, unless a
+    // fresh hold has unlocked a full look-around (see lookUnlocked).
+    // updateFrozenFill() is left out of the dirty check since it only ever
+    // touches the SVG ring, never the 3D scene.
     updateFrozenFill();
-    dirty = updateTiltLook(dt);
+    dirty = lookUnlocked ? updateTiltLook(dt) : updateLockedPose(dt);
   } else if (stillSinceAt !== null) {
     // A stillness attempt is in progress (see updatePauseDetection) --
     // hold the die exactly where it is rather than letting look-around
@@ -1749,7 +1864,7 @@ function startDiceRendering() {
     return;
   }
   lastDiceFrameAt = null;
-  diceRafId = requestAnimationFrame(diceFrame);
+  requestAnimationFrame(diceFrame);
 }
 
 // --- boot ---

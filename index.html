@@ -120,6 +120,16 @@
         <div class="mist-blob mist-blob-b"></div>
         <div class="mist-blob mist-blob-c"></div>
       </div>
+      <!-- Scrying-glass ambience, also BEHIND the die: a darkened glass rim
+           with a faint highlight, a slowly turning ring of cipher marks, and
+           a swirl that stirs only while a roll is in flight. Brightens a
+           little while a result is locked in (see .is-locked/.is-rolling on
+           #stage in style.css). -->
+      <div class="scry-glass" aria-hidden="true"></div>
+      <svg class="cipher-ring" viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="45.5" class="cipher-ring-glyphs" />
+        <circle cx="50" cy="50" r="43.2" class="cipher-ring-dots" />
+      </svg>
       <canvas id="dice-canvas" class="dice-canvas"></canvas>
       <svg id="viewfinder" class="viewfinder" viewBox="0 0 100 100">
         <defs>

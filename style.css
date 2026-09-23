@@ -155,6 +155,110 @@ main {
   }
 }
 
+/* Scrying glass: a dark rim vignette plus a faint top-left highlight, so
+   the stage reads as looking INTO an orb rather than at a flat square.
+   Sits behind the die (before .dice-canvas in the DOM) and only darkens the
+   outer ring the die never reaches, so it can never dim the numerals. */
+.scry-glass {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 32% 22%, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 38%),
+    radial-gradient(circle, rgba(0, 0, 0, 0) 58%, rgba(0, 0, 0, 0.35) 82%, rgba(0, 0, 0, 0.6) 100%);
+  box-shadow: inset 0 0 22px rgba(212, 175, 55, 0.06);
+}
+
+/* A slow swirl that only shows while a roll is in flight -- the glass
+   "clouding over" as the die tumbles. Its rotation is paused (free) the
+   rest of the time rather than removed, so fading out never snaps it back
+   to 0deg mid-fade. */
+.scry-glass::after {
+  content: "";
+  position: absolute;
+  inset: 6%;
+  border-radius: 50%;
+  background: conic-gradient(
+    rgba(0, 0, 0, 0) 0% 18%,
+    rgba(212, 175, 55, 0.1) 30%,
+    rgba(0, 0, 0, 0) 45%,
+    rgba(244, 244, 245, 0.07) 64%,
+    rgba(0, 0, 0, 0) 80%
+  );
+  opacity: 0;
+  transition: opacity 0.8s ease;
+  animation: scry-swirl 1.8s linear infinite paused;
+  will-change: transform, opacity;
+}
+
+.stage.is-rolling .scry-glass::after {
+  opacity: 1;
+  animation-play-state: running;
+}
+
+@keyframes scry-swirl {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* A ring of irregular dashes and dots that reads as unreadable script,
+   turning very slowly. The rotation is on the <svg> element itself (an
+   HTML-level box the compositor can spin for free), not on its children,
+   which would repaint the SVG every frame. */
+.cipher-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.1;
+  animation: cipher-turn 140s linear infinite;
+  transition: opacity 1.2s ease;
+  will-change: transform;
+}
+
+.cipher-ring-glyphs {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 1.4;
+  stroke-dasharray: 0.4 1.1 2.2 0.9 0.4 0.6 1.4 2.6 0.3 1.8 3 1.2 0.5 0.9;
+}
+
+.cipher-ring-dots {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 0.5;
+  stroke-linecap: round;
+  stroke-dasharray: 0 3.6;
+}
+
+/* Sealed: a locked-in result brightens the script a touch; a roll in
+   flight brightens it further. */
+.stage.is-locked .cipher-ring {
+  opacity: 0.18;
+}
+
+.stage.is-rolling .cipher-ring {
+  opacity: 0.3;
+}
+
+@keyframes cipher-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mist-blob,
+  .cipher-ring,
+  .scry-glass::after,
+  .dice-answer.is-revealed {
+    animation: none;
+  }
+}
+
 .dice-canvas {
   position: absolute;
   inset: 0;
@@ -444,6 +548,32 @@ main {
   letter-spacing: 0.02em;
   color: var(--gold);
   text-shadow: 0 0 14px rgba(212, 175, 55, 0.45);
+  transition: opacity 0.4s ease, filter 0.4s ease;
+}
+
+/* "Rolling…" reads as half-seen through the glass... */
+.dice-answer.is-veiled {
+  opacity: 0.45;
+  filter: blur(1.5px);
+}
+
+/* ...and the verdict condenses out of the mist once the die locks in. A
+   one-shot animation, so the blur costs nothing once it ends. */
+.dice-answer.is-revealed {
+  animation: answer-materialise 0.9s ease-out;
+}
+
+@keyframes answer-materialise {
+  from {
+    opacity: 0;
+    filter: blur(8px);
+    letter-spacing: 0.22em;
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    letter-spacing: 0.02em;
+  }
 }
 
 .status {
