@@ -36,6 +36,7 @@ const revealBloomEl = document.getElementById("reveal-bloom");
 const revealRingAEl = document.getElementById("reveal-ring-a");
 const revealRingBEl = document.getElementById("reveal-ring-b");
 const emberLayerEl = document.getElementById("ember-layer");
+const diePickerEl = document.getElementById("die-picker");
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -56,9 +57,14 @@ setStatus("Loading…");
 //
 // devicemotion's rotationRate is also used separately (independently of
 // this filter) as an accumulating "total rotation" meter to detect a shake
-// gesture for dice rolls — see handleMotionEvent.
+// gesture for dice rolls — see processShakeSample.
 
-const GYRO_FUSION_ALPHA = 0.96; // weight on the gyro-predicted value vs. raw orientation
+// Time constant (seconds) of the complementary filter's pull back toward the
+// absolute orientation reading. Expressed as a time rather than a per-frame
+// weight so the blend behaves the same at 60Hz and 120Hz (a fixed 0.96
+// per-frame alpha corrected twice as hard on a 120Hz screen). 0.4s matches
+// the old 0.96 at 60fps.
+const GYRO_FUSION_TAU = 0.4;
 const GYRO_FRESH_WINDOW_MS = 300; // ignore stale rotationRate if devicemotion stopped firing
 const FALLBACK_TAU = 0.05; // seconds; smoothing time-constant when no gyro is available
 
@@ -74,8 +80,6 @@ let lastGyroAt = 0;
 let filteredBeta = 0;
 let filteredGamma = 0;
 let filterInitialized = false;
-
-let lastFrameAt = null;
 
 // Shake detection for dice rolls, based on TOTAL accumulated rotation
 // (gyroscope rotationRate integrated over time) rather than a single sharp
@@ -186,6 +190,27 @@ function handleOrientationEvent(event) {
   hasOrientation = true;
 }
 
+// Real devicemotion events only: these are the only samples allowed to
+// update the gyro state the fusion filter/tilt-look/pause detection read.
+// The drag listener feeds its synthetic rates straight into
+// processShakeSample() instead -- routing them through here used to make a
+// drag ALSO count as the phone physically rotating, so every drag turned the
+// die twice (once by applyDragLook(), again via the fake gyro integrated
+// into filteredBeta/Gamma and picked up by tilt-look) and kept pause
+// detection from ever seeing the phone as still.
+function handleMotionEvent(event) {
+  const rate = event.rotationRate;
+  if (rate && rate.beta !== null && rate.gamma !== null) {
+    gyroBeta = rate.beta;
+    gyroGamma = rate.gamma;
+    hasGyro = true;
+    lastGyroAt = performance.now();
+    processShakeSample(rate.beta, rate.gamma);
+  } else {
+    processShakeSample(undefined, undefined);
+  }
+}
+
 // accumulate=false (used by the drag-look pointermove listener) skips
 // adding this sample into the sustained leaky-bucket accumulator below --
 // see the call site for why: a real device shake is naturally an
@@ -197,18 +222,10 @@ function handleOrientationEvent(event) {
 // that's the intended way a hard drag launches a roll -- but spikeThreshold
 // lets the drag call site require a much harder flick than a real device
 // shake needs (see DRAG_INSTANT_SPIKE_RATE_DEG_PER_SEC).
-function handleMotionEvent(event, accumulate = true, spikeThreshold = INSTANT_SPIKE_RATE_DEG_PER_SEC) {
-  const rate = event.rotationRate;
+function processShakeSample(betaRate, gammaRate, accumulate = true, spikeThreshold = INSTANT_SPIKE_RATE_DEG_PER_SEC) {
   const now = performance.now();
-  const rateValid = !!(rate && rate.beta !== null && rate.gamma !== null);
-  const rotSpeed = rateValid ? Math.abs(rate.beta) + Math.abs(rate.gamma) : 0;
-
-  if (rateValid) {
-    gyroBeta = rate.beta;
-    gyroGamma = rate.gamma;
-    hasGyro = true;
-    lastGyroAt = now;
-  }
+  const rateValid = betaRate !== undefined;
+  const rotSpeed = rateValid ? Math.abs(betaRate) + Math.abs(gammaRate) : 0;
 
   if (lastMotionEventAt !== null) {
     const dt = Math.min((now - lastMotionEventAt) / 1000, 0.2); // clamp for irregular event gaps
@@ -229,8 +246,6 @@ function handleMotionEvent(event, accumulate = true, spikeThreshold = INSTANT_SP
 
     if (shouldFire) {
       const peak = Math.max(rotationAccumPeakRate, rotSpeed);
-      const beta = rateValid ? rate.beta : undefined;
-      const gamma = rateValid ? rate.gamma : undefined;
 
       stats.shakeSpeedSampleCount++;
       stats.shakeSpeedSampleSum += peak;
@@ -243,10 +258,10 @@ function handleMotionEvent(event, accumulate = true, spikeThreshold = INSTANT_SP
       // playing (that can only have started while held, and finishes on
       // its own regardless of whether the hold is later released).
       if (pointerHeld) {
-        rollDice(peak, beta, gamma);
+        rollDice(peak, betaRate, gammaRate);
         stats.rollTriggerCount++;
       } else if (!rolling && !settleState) {
-        pullDice(peak, beta, gamma);
+        pullDice(peak, betaRate, gammaRate);
         stats.pullTriggerCount++;
       }
       lastRollTriggerAt = now;
@@ -259,24 +274,36 @@ function handleMotionEvent(event, accumulate = true, spikeThreshold = INSTANT_SP
   lastMotionEventAt = now;
 }
 
-function stepFilter(dt) {
-  const gyroFresh = hasGyro && performance.now() - lastGyroAt < GYRO_FRESH_WINDOW_MS;
-
-  if (gyroFresh) {
-    const predictedBeta = filteredBeta + gyroBeta * dt;
-    const predictedGamma = filteredGamma + gyroGamma * dt;
-    filteredBeta = GYRO_FUSION_ALPHA * predictedBeta + (1 - GYRO_FUSION_ALPHA) * rawBeta;
-    filteredGamma = GYRO_FUSION_ALPHA * predictedGamma + (1 - GYRO_FUSION_ALPHA) * rawGamma;
-  } else {
-    const k = 1 - Math.exp(-dt / FALLBACK_TAU);
-    filteredBeta += (rawBeta - filteredBeta) * k;
-    filteredGamma += (rawGamma - filteredGamma) * k;
-  }
+// Shortest signed difference between two angles in degrees. beta wraps at
+// +/-180, so a plain subtraction across that seam reads as a ~360deg jump
+// and would yank the filter (and everything derived from it) the long way
+// round.
+function angleDiffDeg(to, from) {
+  return ((((to - from) % 360) + 540) % 360) - 180;
 }
 
-// Now that tilt/drag can freely rotate the die to look around every side
-// (see updateTiltLook()/applyDragLook()) with no auto-snap-back, there's no
-// longer a fixed "zero" to return to on its own -- so Recenter is
+function isGyroFresh(now) {
+  return hasGyro && now - lastGyroAt < GYRO_FRESH_WINDOW_MS;
+}
+
+function stepFilter(now, dt) {
+  if (isGyroFresh(now)) {
+    const correction = 1 - Math.exp(-dt / GYRO_FUSION_TAU);
+    filteredBeta += gyroBeta * dt;
+    filteredGamma += gyroGamma * dt;
+    filteredBeta += angleDiffDeg(rawBeta, filteredBeta) * correction;
+    filteredGamma += (rawGamma - filteredGamma) * correction;
+  } else {
+    const k = 1 - Math.exp(-dt / FALLBACK_TAU);
+    filteredBeta += angleDiffDeg(rawBeta, filteredBeta) * k;
+    filteredGamma += (rawGamma - filteredGamma) * k;
+  }
+  filteredBeta = angleDiffDeg(filteredBeta, 0); // keep in [-180, 180)
+}
+
+// Before the first result, tilt/drag freely rotate the die to look around
+// every side (see updateTiltLook()/applyDragLook()) with no fixed "zero"
+// to return to on its own -- so Recenter is
 // repurposed from "recalibrate the tilt sensor's zero-point" to "jump back
 // to the last settled result" (restQuaternion, updated in finishRoll()),
 // giving you a quick way back after looking around.
@@ -338,7 +365,7 @@ let lastLevelLightCy = null;
 
 function updateLevelLight() {
   const nx = Math.max(-1, Math.min(1, (filteredGamma - frozenZeroGamma) / TILT_VISUAL_RANGE_DEG));
-  const ny = Math.max(-1, Math.min(1, (filteredBeta - frozenZeroBeta) / TILT_VISUAL_RANGE_DEG));
+  const ny = Math.max(-1, Math.min(1, angleDiffDeg(filteredBeta, frozenZeroBeta) / TILT_VISUAL_RANGE_DEG));
   const cx = 50 + nx * LEVEL_LIGHT_OFFSET_RANGE;
   const cy = 50 + ny * LEVEL_LIGHT_OFFSET_RANGE;
   if (
@@ -355,10 +382,9 @@ function updateLevelLight() {
 }
 
 function updatePauseDetection(now, dt) {
-  const gyroFresh = hasGyro && now - lastGyroAt < GYRO_FRESH_WINDOW_MS;
-  const deviceSpeed = gyroFresh
+  const deviceSpeed = isGyroFresh(now)
     ? Math.hypot(gyroBeta, gyroGamma)
-    : Math.hypot(filteredBeta - prevPauseBeta, filteredGamma - prevPauseGamma) / dt;
+    : Math.hypot(angleDiffDeg(filteredBeta, prevPauseBeta), filteredGamma - prevPauseGamma) / dt;
   prevPauseBeta = filteredBeta;
   prevPauseGamma = filteredGamma;
 
@@ -399,19 +425,13 @@ function updatePauseDetection(now, dt) {
   }
 }
 
-function frame(now) {
-  requestAnimationFrame(frame);
-  if (!hasOrientation) return;
-
-  if (lastFrameAt === null) {
-    lastFrameAt = now;
-    return;
-  }
-  const dt = Math.min((now - lastFrameAt) / 1000, 0.1); // clamp for tab-switch pauses
-  lastFrameAt = now;
-
-  stepFilter(dt);
-
+// Runs at the top of diceFrame() rather than in its own requestAnimationFrame
+// loop: with two separate loops the dice loop (registered first) always
+// read the PREVIOUS frame's filtered orientation, adding a full frame of
+// latency to every tilt.
+function updateSensors(now, dt) {
+  if (!hasOrientation || dt <= 0) return;
+  stepFilter(now, dt);
   updateLevelLight();
   updatePauseDetection(now, dt);
 }
@@ -419,7 +439,6 @@ function frame(now) {
 function startListening() {
   window.addEventListener("deviceorientation", handleOrientationEvent);
   window.addEventListener("devicemotion", handleMotionEvent);
-  requestAnimationFrame(frame);
 }
 
 async function requestSensorPermissions() {
@@ -537,7 +556,14 @@ function recordDragSpeedSample(speedDegPerSec) {
   stats.dragSpeedSampleCount++;
   stats.dragSpeedSampleSum += speedDegPerSec;
   if (speedDegPerSec > stats.dragSpeedPeak) stats.dragSpeedPeak = speedDegPerSec;
-  renderStatsPanel();
+  // Only the drag readouts change here -- not worth rebuilding the whole
+  // panel (including the 20-row face table) on every pointermove.
+  if (!settingsPanelEl.hidden) renderDragStats();
+}
+
+function renderDragStats() {
+  statDragAvgEl.textContent = formatSpeed(stats.dragSpeedSampleSum, stats.dragSpeedSampleCount);
+  statDragPeakEl.textContent = formatPeakSpeed(stats.dragSpeedPeak);
 }
 
 function formatSpeed(sum, count) {
@@ -582,8 +608,7 @@ function renderStatsPanel() {
     })
     .join("");
 
-  statDragAvgEl.textContent = formatSpeed(stats.dragSpeedSampleSum, stats.dragSpeedSampleCount);
-  statDragPeakEl.textContent = formatPeakSpeed(stats.dragSpeedPeak);
+  renderDragStats();
 
   statShakeAvgEl.textContent = formatSpeed(stats.shakeSpeedSampleSum, stats.shakeSpeedSampleCount);
   statShakePeakEl.textContent = formatPeakSpeed(stats.shakeSpeedPeak);
@@ -673,8 +698,8 @@ const FACE_PHRASE_ORDER = [
   0, 1, 2, 3, // 17-20: Yes
 ];
 
-// Which physical triangle (by index -- matching faceNormals/materials/
-// geometry group order) shows which printed number. A real d20 puts 1 and
+// Which physical triangle (by index -- matching faceNormals and the
+// geometry's triangle order) shows which printed number. A real d20 puts 1 and
 // 20 on opposite faces on purpose, so the two most extreme outcomes are as
 // far apart as possible; THREE.IcosahedronGeometry's own triangle order
 // has no such consideration. Left as "number: i + 1", measuring the real
@@ -694,7 +719,7 @@ const FACE_PHRASE_ORDER = [
 // 17 faces", later "duplicates" on a revealed "Probably no"): only ONE
 // face is ever twisted upright, so every other visible face shows at
 // whatever rotation its position leaves it at -- and "1" is drawn as a
-// bare vertical bar (see makeFaceTexture(), fixed separately for a "1
+// bare vertical bar (see drawFaceNumber(), fixed separately for a "1
 // rotated looks like 7" bug) with nothing to mark where it starts or
 // ends. Sitting next to almost any other single digit, that bar reads as
 // the leading "1" of a two-digit number -- and because faces 10-19 are
@@ -728,18 +753,12 @@ const TRIANGLE_TO_FACE_NUMBER = [
   16, 18, 15, 17, 19, 12, 11, 14, 20, 7, 10, 5, 8, 4, 2, 1, 6, 13, 9, 3,
 ];
 
-const FACES = TRIANGLE_TO_FACE_NUMBER.map((number) => ({
-  number,
-  phrase: OUTCOME_PHRASES[FACE_PHRASE_ORDER[number - 1]],
-}));
-
 let renderer = null;
 let scene = null;
 let camera = null;
 let diceMesh = null;
 let faceNormals = null;
 let faceUpVectors = null;
-let diceRafId = null;
 
 // Render-skip-at-rest: diceFrame() runs requestAnimationFrame continuously
 // no matter what (cheap -- it's the only way to promptly notice a shake or
@@ -781,7 +800,33 @@ const SETTLE_DURATION_MS = 650; // softened: was 450, paired with a gentler easi
 // above the pause threshold guarantees "the phone counts as still" means
 // the same thing everywhere: nothing can drift once pause-detection would
 // also call it still.
-const TILT_LOOK_DEADZONE_DEG_PER_SEC = 15;
+//
+// The deadzone is a soft ramp rather than a hard cutoff: below
+// TILT_LOOK_DEADZONE_LOW_DEG_PER_SEC the die ignores the phone entirely (the
+// invariant above), above TILT_LOOK_DEADZONE_HIGH_DEG_PER_SEC it follows
+// 1:1, and in between the follow gain eases up smoothly. A hard cutoff made
+// a slow turn hovering around the threshold stutter between "frozen" and
+// "full 1:1" frame to frame, which read as a loose, notchy control.
+const TILT_LOOK_DEADZONE_LOW_DEG_PER_SEC = PAUSE_STILL_THRESHOLD_DEG_PER_SEC;
+const TILT_LOOK_DEADZONE_HIGH_DEG_PER_SEC = 26;
+
+// Locked-in result: once a roll or pause-reveal settles, the die stays on
+// its face rather than following the phone 1:1. All it does is lean a
+// little with the phone's tilt, so it still feels like a physical object:
+// LOCK_PARALLAX_GAIN of the tilt, capped at LOCK_PARALLAX_MAX_DEG. That lean
+// is measured against a reference that slowly follows the phone
+// (LOCK_REF_RECENTER_TAU), so holding the phone at a new angle eases the
+// die back to dead-on instead of leaving it leaning forever.
+// Pressing and holding the screen again unlocks a full look-around (see
+// lookUnlocked); letting go eases the die back onto the locked face
+// (LOCK_FOLLOW_TAU).
+const LOCK_PARALLAX_GAIN = 0.12;
+const LOCK_PARALLAX_MAX_DEG = 6;
+const LOCK_REF_RECENTER_TAU = 2.5; // seconds
+const LOCK_FOLLOW_TAU = 0.1; // seconds
+const LOCK_REST_EPSILON_RAD = 1e-3; // ~0.06deg: closer than this counts as "at rest", no render needed
+const LOCKED_PULL_SCALE = 0.35; // a denied (not-held) shake barely nudges a locked die
+const DEG2RAD = Math.PI / 180;
 
 // Pausing (the phone going physically still — see updatePauseDetection)
 // snaps the die onto whichever face is currently nearest the camera and
@@ -793,11 +838,17 @@ const TILT_LOOK_DEADZONE_DEG_PER_SEC = 15;
 let frozen = false;
 let frozenZeroBeta = 0;
 let frozenZeroGamma = 0;
+// True only while a hold that STARTED after the die locked is still down --
+// holding straight through a roll (you have to hold to shake-roll) must not
+// leave the fresh result free-spinning with every hand movement.
+let lookUnlocked = false;
+let lockRefBeta = 0;
+let lockRefGamma = 0;
 
-// The last settled result's orientation, updated in finishRoll(). Tilt and
-// drag can freely rotate the die to look around every side with no auto-
-// snap-back (see updateTiltLook()/applyDragLook()), so this is what the
-// Recenter button jumps back to. Starts at identity -- before any result
+// The last settled result's orientation, updated in finishRoll(). A locked
+// die leans around this and eases back onto it after a look-around hold
+// (see updateLockedPose()); it's also what the Recenter button jumps back
+// to. Starts at identity -- before any result
 // has ever been shown, there's nothing else meaningful to recenter to.
 const restQuaternion = new THREE.Quaternion();
 let settleState = null;
@@ -824,14 +875,29 @@ function easeInOutQuart(t) {
   return t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2;
 }
 
-function computeFaceNormals(geometry) {
+// Groups a non-indexed geometry's triangles into the die's real faces
+// (coplanar triangles -- a d6 square is 2, a d12 pentagon 3), in order of
+// first appearance, so a one-triangle-per-face d20 keeps exactly the
+// triangle order TRIANGLE_TO_FACE_NUMBER was derived against.
+//
+// Each face also gets the "up" direction of its printed number, in local
+// space -- used to twist the die around the camera axis once it locks so the
+// number reads upright (see uprightTwist()):
+//   - "apex": toward the 3rd vertex of the face's first triangle. For the
+//     d20 this is identical to the old base-midpoint-to-apex vector (in an
+//     equilateral triangle both point the same way).
+//   - "edge": toward the midpoint of the first triangle's first edge -- a
+//     d6's number sits square to its edges rather than pointing at a corner.
+//   - "far": toward the farthest vertex -- a d10 kite's long point, the pole.
+function buildDieFaces(geometry, upMode) {
   const pos = geometry.attributes.position;
-  const normals = [];
+  const faces = [];
   const vA = new THREE.Vector3();
   const vB = new THREE.Vector3();
   const vC = new THREE.Vector3();
   const cb = new THREE.Vector3();
   const ab = new THREE.Vector3();
+
   for (let i = 0; i < pos.count; i += 3) {
     vA.fromBufferAttribute(pos, i);
     vB.fromBufferAttribute(pos, i + 1);
@@ -839,42 +905,132 @@ function computeFaceNormals(geometry) {
     cb.subVectors(vC, vB);
     ab.subVectors(vA, vB);
     cb.cross(ab).normalize();
-    normals.push(cb.clone());
+
+    let face = faces.find((f) => f.normal.dot(cb) > 0.9999);
+    if (!face) {
+      face = { normal: cb.clone(), vertices: [], triangleStarts: [], firstTriangle: [vA.clone(), vB.clone(), vC.clone()] };
+      faces.push(face);
+    }
+    face.triangleStarts.push(i);
+    for (const v of [vA, vB, vC]) {
+      if (!face.vertices.some((u) => u.distanceToSquared(v) < 1e-10)) face.vertices.push(v.clone());
+    }
   }
-  return normals;
+
+  for (const face of faces) {
+    const { normal, vertices, firstTriangle } = face;
+    const centroid = new THREE.Vector3();
+    for (const v of vertices) centroid.add(v);
+    centroid.divideScalar(vertices.length);
+
+    const up = new THREE.Vector3();
+    if (upMode === "edge") {
+      up.addVectors(firstTriangle[0], firstTriangle[1]).multiplyScalar(0.5).sub(centroid);
+    } else if (upMode === "far") {
+      let far = vertices[0];
+      for (const v of vertices) if (v.distanceToSquared(centroid) > far.distanceToSquared(centroid)) far = v;
+      up.subVectors(far, centroid);
+    } else {
+      up.subVectors(firstTriangle[2], centroid);
+    }
+    up.addScaledVector(normal, -up.dot(normal)).normalize();
+    // Screen-right when looking at the face from outside (normal toward the
+    // viewer, up as screen-up).
+    const right = new THREE.Vector3().crossVectors(up, normal);
+
+    // Outline in face-plane coordinates, sorted around the centroid, for the
+    // circumradius (texture span) and inradius (how big the number can be).
+    const outline = vertices
+      .map((v) => {
+        const d = v.clone().sub(centroid);
+        return { x: d.dot(right), y: d.dot(up) };
+      })
+      .sort((p, q) => Math.atan2(p.y, p.x) - Math.atan2(q.y, q.x));
+    let radius = 0;
+    let inradius = Infinity;
+    outline.forEach((p, k) => {
+      const q = outline[(k + 1) % outline.length];
+      radius = Math.max(radius, Math.hypot(p.x, p.y));
+      inradius = Math.min(inradius, Math.abs(p.x * q.y - q.x * p.y) / Math.hypot(q.x - p.x, q.y - p.y));
+    });
+
+    Object.assign(face, { centroid, up, right, radius, inradius });
+  }
+  return faces;
 }
 
-// The "up" direction of each face's printed number, in local (object)
-// space — used to correct the die's twist around the camera axis once it
-// locks, so the number reads upright instead of landing at whatever angle
-// the settle happened to leave it at. Per the canonical UV triangle in
-// assignPerFaceUVs (vertex 0/1 = the base, vertex 2 = the apex, which maps
-// to the top of the printed texture), "up" points from the base's midpoint
-// toward the apex vertex. That vector already lies in the face's own
-// plane (all three points are face vertices), so orthogonalizing against
-// the normal below is just a numerical-safety normalization, not a real
-// correction.
-function computeFaceUpVectors(geometry, normals) {
-  const pos = geometry.attributes.position;
-  const ups = [];
-  const vA = new THREE.Vector3();
-  const vB = new THREE.Vector3();
-  const vC = new THREE.Vector3();
-  const base = new THREE.Vector3();
-  const up = new THREE.Vector3();
-  for (let i = 0; i < pos.count; i += 3) {
-    const face = i / 3;
-    vA.fromBufferAttribute(pos, i);
-    vB.fromBufferAttribute(pos, i + 1);
-    vC.fromBufferAttribute(pos, i + 2);
-    base.addVectors(vA, vB).multiplyScalar(0.5);
-    up.subVectors(vC, base);
-    const normal = normals[face];
-    up.addScaledVector(normal, -up.dot(normal));
-    up.normalize();
-    ups.push(up.clone());
+// Face numbers for every die but the d20 (which has its own hand-derived
+// layout, TRIANGLE_TO_FACE_NUMBER): the standard convention that opposite
+// faces sum to sides + 1 (1 opposite 6 on a d6, and so on). A d4 has no
+// opposite faces, so it just counts up.
+function assignFaceNumbers(faces, def) {
+  if (def.numbering) return def.numbering.slice();
+  const n = faces.length;
+  const numbers = new Array(n).fill(0);
+  let low = 1;
+  for (let i = 0; i < n; i++) {
+    if (numbers[i]) continue;
+    numbers[i] = low;
+    let opposite = -1;
+    let bestDot = -0.5; // anything less antiparallel than this isn't really "opposite"
+    for (let j = 0; j < n; j++) {
+      if (j === i || numbers[j]) continue;
+      const dot = faces[i].normal.dot(faces[j].normal);
+      if (dot < bestDot) {
+        bestDot = dot;
+        opposite = j;
+      }
+    }
+    if (opposite >= 0) numbers[opposite] = n + 1 - low;
+    low++;
   }
-  return ups;
+  return numbers;
+}
+
+// Pentagonal trapezohedron: two poles plus a 10-vertex ring zig-zagging
+// just above/below the equator, giving 10 kite faces. The pole height is the
+// one that makes every kite exactly planar for the chosen zig-zag height
+// (poleHeight = ringHeight * (1 + cos 36deg) / (1 - cos 36deg)).
+function makeTrapezohedronGeometry(radius) {
+  const ringHeight = 0.1;
+  const c = Math.cos(Math.PI / 5);
+  const poleHeight = (ringHeight * (1 + c)) / (1 - c);
+  const top = new THREE.Vector3(0, poleHeight, 0);
+  const bottom = new THREE.Vector3(0, -poleHeight, 0);
+  const ring = [];
+  for (let i = 0; i < 10; i++) {
+    const a = (i * Math.PI) / 5;
+    ring.push(new THREE.Vector3(Math.cos(a), i % 2 === 0 ? ringHeight : -ringHeight, Math.sin(a)));
+  }
+  const at = (i) => ring[i % 10];
+  const triangles = [];
+  for (let i = 0; i < 10; i += 2) {
+    triangles.push([top, at(i), at(i + 1)], [top, at(i + 1), at(i + 2)]);
+    triangles.push([bottom, at(i + 1), at(i + 2)], [bottom, at(i + 2), at(i + 3)]);
+  }
+
+  const scale = radius / Math.max(poleHeight, Math.hypot(1, ringHeight));
+  const positions = new Float32Array(triangles.length * 9);
+  const e1 = new THREE.Vector3();
+  const e2 = new THREE.Vector3();
+  const centroid = new THREE.Vector3();
+  triangles.forEach((tri, t) => {
+    // Wind every triangle counter-clockwise from outside (normal pointing
+    // away from the center), as three.js expects for front faces.
+    e1.subVectors(tri[1], tri[0]);
+    e2.subVectors(tri[2], tri[0]);
+    centroid.copy(tri[0]).add(tri[1]).add(tri[2]);
+    const ordered = e1.cross(e2).dot(centroid) < 0 ? [tri[0], tri[2], tri[1]] : tri;
+    ordered.forEach((v, k) => {
+      positions[t * 9 + k * 3] = v.x * scale;
+      positions[t * 9 + k * 3 + 1] = v.y * scale;
+      positions[t * 9 + k * 3 + 2] = v.z * scale;
+    });
+  });
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.computeVertexNormals(); // non-indexed, so these come out flat per face
+  return geometry;
 }
 
 // After aligning some local vector to the camera direction via alignQuat,
@@ -891,105 +1047,280 @@ function uprightTwist(localUp, alignQuat, cameraDir) {
   return new THREE.Quaternion().setFromAxisAngle(cameraDir, angle);
 }
 
-// Every face gets the SAME canonical UV triangle, paired with a texture
-// (drawn below) that puts its number in the matching spot — so we don't
-// need a real per-face UV unwrap, just a consistent convention the
-// geometry and the texture both agree on. Winding is uniform across all 20
-// faces (verified separately), so this reads upright on every face.
-function assignPerFaceUVs(geometry) {
-  const uv = geometry.attributes.uv;
-  const corners = [
-    [0, 0],
-    [1, 0],
-    [0.5, 1],
-  ];
-  for (let face = 0; face < 20; face++) {
-    for (let vertex = 0; vertex < 3; vertex++) {
-      const i = face * 3 + vertex;
-      uv.setXY(i, corners[vertex][0], corners[vertex][1]);
-    }
-  }
-  uv.needsUpdate = true;
-}
-
 // Only ONE face can ever be twisted upright at a time (see uprightTwist());
 // every other visible face is necessarily shown at whatever arbitrary
 // rotation its own position happens to leave it at -- normal for any
 // polyhedral die, but it means a digit's shape has to survive being seen
 // at any angle, not just upright. Two real per-digit ambiguities showed up
-// under rotation (caught by screenshotting real faces, see
-// scratchpad/crop-11.png from that investigation):
+// under rotation (caught by screenshotting real faces):
 //   - "1" in this font carries a diagonal serif flag that, rotated away
 //     from upright, reads as the diagonal stroke of a "7" -- so a rotated
 //     "11" could be misread as "17"/"71", right next to a genuine "17".
 //   - "6" and "9" are literal rotational mirrors of each other in any
-//     font, and both are real face numbers on this die -- the exact
-//     problem physical dice solve with an underline under one or both.
+//     font -- the exact problem physical dice solve with an underline.
 // Fixed the same way: "1" is hand-drawn as a plain vertical bar (a bare
 // stroke has no diagonal to misread, at any rotation) instead of the
-// font's glyph, and "6"/"9" get a short underline. Every other digit is
-// unambiguous under rotation and still uses the font as-is.
-const DIGIT_FONT_SIZE = 108;
-const ONE_BAR_WIDTH = DIGIT_FONT_SIZE * 0.16;
-const SIX_NINE_UNDERLINE_HEIGHT = DIGIT_FONT_SIZE * 0.07;
+// font's glyph, and a standalone "6"/"9" gets a short underline on any die
+// that actually has both. Every other digit is unambiguous under rotation
+// and still uses the font as-is.
+const ATLAS_CELL_PX = 256;
+const ATLAS_FACE_PADDING = 1.06; // cell spans a little past the face so mipmaps never bleed a neighbor's number in
+const FACE_FONT_PER_INRADIUS = 1.46; // font px per inradius px; matches the d20's original digit size
+const FACE_TEXT_MAX_WIDTH_PER_INRADIUS = 1.7; // two-digit numbers shrink to fit narrower faces (d10 kites)
+const ONE_BAR_WIDTH_PER_FONT = 0.16;
+const SIX_NINE_UNDERLINE_HEIGHT_PER_FONT = 0.07;
 
-function makeFaceTexture(number) {
-  const size = 256;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
+function drawFaceNumber(ctx, label, cx, cy, fontPx, maxWidthPx, underlineSixNine) {
+  ctx.font = `bold ${fontPx}px system-ui, sans-serif`;
+  const chars = label.split("");
+  let widths = chars.map((ch) => ctx.measureText(ch).width);
+  let totalWidth = widths.reduce((a, b) => a + b, 0);
+  if (totalWidth > maxWidthPx) {
+    fontPx *= maxWidthPx / totalWidth;
+    ctx.font = `bold ${fontPx}px system-ui, sans-serif`;
+    widths = chars.map((ch) => ctx.measureText(ch).width);
+    totalWidth = widths.reduce((a, b) => a + b, 0);
+  }
 
-  ctx.fillStyle = OBSIDIAN_COLOR;
-  ctx.fillRect(0, 0, size, size);
-
-  ctx.fillStyle = GOLD_COLOR;
-  ctx.font = `bold ${DIGIT_FONT_SIZE}px system-ui, sans-serif`;
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-
-  // Sits near the centroid of the canonical UV triangle above (apex at the
-  // canvas top, base at the bottom), not the canvas's literal center.
-  const baselineY = size * 0.66;
-  const chars = String(number).split("");
-  const widths = chars.map((ch) => ctx.measureText(ch).width);
-  const totalWidth = widths.reduce((a, b) => a + b, 0);
-  let x = size / 2 - totalWidth / 2;
-
-  // The "1" bar's vertical extent is measured from a real digit's actual
-  // glyph bounds ("8": full height, no descender) rather than a guessed
-  // fraction of the font size -- a fixed guess left the bar sitting
-  // slightly lower than the real digits (most visible in "16"/"19", where
-  // the "1" bar read as sitting noticeably below the "6"/"9" next to it).
-  // Measuring the real glyph keeps the two always in exact agreement, in
-  // this font or any other.
-  const refMetrics = ctx.measureText("8");
-  const barTop = baselineY - refMetrics.actualBoundingBoxAscent;
-  const barBottom = baselineY + refMetrics.actualBoundingBoxDescent;
+  // The "1" bar's vertical extent (and the vertical centering) is measured
+  // from a real digit's actual glyph bounds ("8": full height, no
+  // descender) rather than a guessed fraction of the font size, so the bar
+  // always sits exactly level with the real digits beside it.
+  const ref = ctx.measureText("8");
+  const baselineY = cy + (ref.actualBoundingBoxAscent - ref.actualBoundingBoxDescent) / 2;
+  const barTop = baselineY - ref.actualBoundingBoxAscent;
+  const barBottom = baselineY + ref.actualBoundingBoxDescent;
+  const barWidth = fontPx * ONE_BAR_WIDTH_PER_FONT;
+  let x = cx - totalWidth / 2;
 
   chars.forEach((ch, i) => {
     const w = widths[i];
     if (ch === "1") {
-      ctx.fillRect(x + w / 2 - ONE_BAR_WIDTH / 2, barTop, ONE_BAR_WIDTH, barBottom - barTop);
+      ctx.fillRect(x + w / 2 - barWidth / 2, barTop, barWidth, barBottom - barTop);
     } else {
       ctx.fillText(ch, x, baselineY);
-      // Only the standalone faces 6 and 9 get the underline -- those are
-      // the pair that's actually ambiguous with each other (both are real
-      // face numbers on this die). 16 and 19 rotate into "91"/"61", which
-      // aren't real faces here, so there's nothing to disambiguate and the
-      // underline was just visual clutter on them.
-      if (chars.length === 1 && (ch === "6" || ch === "9")) {
-        const underlineY = barBottom + DIGIT_FONT_SIZE * 0.06;
-        ctx.fillRect(x + w * 0.12, underlineY, w * 0.76, SIX_NINE_UNDERLINE_HEIGHT);
+      // Only a standalone 6/9 -- "16"/"19" rotate into "91"/"61", which
+      // aren't real faces, so an underline there would just be clutter.
+      if (underlineSixNine && chars.length === 1 && (ch === "6" || ch === "9")) {
+        ctx.fillRect(x + w * 0.12, barBottom + fontPx * 0.06, w * 0.76, fontPx * SIX_NINE_UNDERLINE_HEIGHT_PER_FONT);
       }
     }
     x += w;
   });
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.needsUpdate = true;
-  return texture;
 }
+
+// Every face's number goes into ONE texture (a grid of cells), and each
+// face's UVs are a flat projection of the face onto its own cell, centered
+// on the face's centroid -- one material and one draw call per die. A
+// d20 face projects to the same spot its number always sat at (the
+// triangle's centroid).
+function applyDieAtlas(geometry, faces, def) {
+  const cols = Math.ceil(Math.sqrt(faces.length));
+  const rows = Math.ceil(faces.length / cols);
+  const width = cols * ATLAS_CELL_PX;
+  const height = rows * ATLAS_CELL_PX;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = OBSIDIAN_COLOR;
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = GOLD_COLOR;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+
+  const underlineSixNine = def.sides >= 9;
+  const pos = geometry.attributes.position;
+  const uv = new Float32Array(pos.count * 2);
+  const p = new THREE.Vector3();
+
+  faces.forEach((face, i) => {
+    const cellX = (i % cols) * ATLAS_CELL_PX + ATLAS_CELL_PX / 2;
+    const cellY = Math.floor(i / cols) * ATLAS_CELL_PX + ATLAS_CELL_PX / 2;
+    const pxPerUnit = ATLAS_CELL_PX / (2 * face.radius * ATLAS_FACE_PADDING);
+    const label = def.printZeroForTen && face.number === 10 ? "0" : String(face.number);
+    drawFaceNumber(
+      ctx,
+      label,
+      cellX,
+      cellY,
+      FACE_FONT_PER_INRADIUS * face.inradius * pxPerUnit,
+      FACE_TEXT_MAX_WIDTH_PER_INRADIUS * face.inradius * pxPerUnit,
+      underlineSixNine
+    );
+
+    for (const start of face.triangleStarts) {
+      for (let k = start; k < start + 3; k++) {
+        p.fromBufferAttribute(pos, k).sub(face.centroid);
+        uv[k * 2] = (cellX + p.dot(face.right) * pxPerUnit) / width;
+        uv[k * 2 + 1] = 1 - (cellY - p.dot(face.up) * pxPerUnit) / height; // canvas y runs down; texture v runs up
+      }
+    }
+  });
+
+  geometry.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  return new THREE.CanvasTexture(canvas);
+}
+
+// --- die types ---
+//
+// The standard D&D set. `size` is each die's circumradius, tuned so they
+// all read as roughly the same size on screen. `restTiltDeg` tips a die's
+// resting pose slightly off dead-on: a d4 or d6 seen exactly face-on is
+// just a flat triangle/square, with none of its sides showing. Far too
+// small to change which face counts as nearest the camera. Only the die in use exists
+// at any time -- built on demand and its GPU resources disposed when
+// switching away -- so the set costs nothing at startup beyond the one die
+// actually shown. The d20 alone keeps the oracle phrases, glows and
+// natural 1/20 fanfare; the others simply show the number rolled.
+const DIE_TYPES = {
+  d4: { sides: 4, size: 1.18, up: "apex", restTiltDeg: 40, makeGeometry: (r) => new THREE.TetrahedronGeometry(r) },
+  d6: {
+    sides: 6,
+    size: 1.1,
+    up: "edge",
+    restTiltDeg: 32,
+    makeGeometry: (r) => {
+      const side = (2 * r) / Math.sqrt(3);
+      return new THREE.BoxGeometry(side, side, side).toNonIndexed();
+    },
+  },
+  d8: { sides: 8, size: 1.12, up: "apex", makeGeometry: (r) => new THREE.OctahedronGeometry(r) },
+  d10: { sides: 10, size: 1.1, up: "far", makeGeometry: makeTrapezohedronGeometry, printZeroForTen: true },
+  d12: { sides: 12, size: 1.05, up: "apex", makeGeometry: (r) => new THREE.DodecahedronGeometry(r) },
+  d20: {
+    sides: 20,
+    size: 1,
+    up: "apex",
+    makeGeometry: (r) => new THREE.IcosahedronGeometry(r, 0),
+    numbering: TRIANGLE_TO_FACE_NUMBER,
+    oracle: true,
+  },
+};
+const DEFAULT_DIE = "d20";
+const DIE_STORAGE_KEY = "ask-ball-die";
+const DIE_APPEAR_MS = 260;
+
+let currentDie = null;
+let dieAppearStartAt = null;
+
+function buildDie(key) {
+  const def = DIE_TYPES[key];
+  const geometry = def.makeGeometry(def.size);
+  geometry.clearGroups(); // one material for the whole die (BoxGeometry ships with 6 groups)
+  const faces = buildDieFaces(geometry, def.up);
+  const numbers = assignFaceNumbers(faces, def);
+  faces.forEach((face, i) => {
+    face.number = numbers[i];
+    face.phrase = def.oracle ? OUTCOME_PHRASES[FACE_PHRASE_ORDER[numbers[i] - 1]] : String(numbers[i]);
+  });
+
+  // MeshStandardMaterial rather than MeshPhysicalMaterial: clearcoat adds a
+  // whole second specular shading pass per pixel, a real cost on mobile
+  // GPUs rendering this canvas every frame during any roll/tilt/drag.
+  const material = new THREE.MeshStandardMaterial({
+    map: applyDieAtlas(geometry, faces, def),
+    color: 0xffffff, // texture already carries the final colors; no tint
+    roughness: 0.2,
+    metalness: 0.2,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry), new THREE.LineBasicMaterial({ color: 0x000000 })));
+  return { key, def, mesh, faces };
+}
+
+function disposeDie(die) {
+  die.mesh.traverse((obj) => {
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) {
+      if (obj.material.map) obj.material.map.dispose();
+      obj.material.dispose();
+    }
+  });
+}
+
+// Face-to-camera, number-upright orientation for a face -- the resting pose
+// of a roll landing on it (plus the die's restTiltDeg, if any).
+// Turns the front face down-left, away from the key light (tilting it up-
+// right points it straight into the light and blows out the whole face), so
+// a sliver of the top and right sides shows.
+const REST_TILT_AXIS = new THREE.Vector3(1, -1, 0).normalize();
+
+function applyRestTilt(quat) {
+  const tiltDeg = currentDie.def.restTiltDeg || 0;
+  if (tiltDeg) quat.premultiply(new THREE.Quaternion().setFromAxisAngle(REST_TILT_AXIS, tiltDeg * DEG2RAD));
+  return quat;
+}
+
+function uprightFaceQuat(index) {
+  const alignQuat = new THREE.Quaternion().setFromUnitVectors(faceNormals[index], CAMERA_DIR);
+  return applyRestTilt(uprightTwist(faceUpVectors[index], alignQuat, CAMERA_DIR).multiply(alignQuat));
+}
+
+function loadDieKey() {
+  try {
+    const stored = localStorage.getItem(DIE_STORAGE_KEY);
+    if (stored && DIE_TYPES[stored]) return stored;
+  } catch {
+    // ignore -- private browsing / storage disabled
+  }
+  return DEFAULT_DIE;
+}
+
+// Swaps in a new die, presenting its highest face upright, and resets to a
+// fresh "shake to roll" state -- any roll, reveal or lock belongs to the
+// die being replaced.
+function setDieType(key) {
+  if (!DIE_TYPES[key]) key = DEFAULT_DIE;
+  if (currentDie && currentDie.key === key) return;
+
+  const next = buildDie(key);
+  if (currentDie) {
+    scene.remove(currentDie.mesh);
+    disposeDie(currentDie);
+  }
+  currentDie = next;
+  diceMesh = next.mesh;
+  faceNormals = next.faces.map((f) => f.normal);
+  faceUpVectors = next.faces.map((f) => f.up);
+  scene.add(diceMesh);
+
+  rollState = null;
+  settleState = null;
+  pullState = null;
+  rolling = false;
+  frozen = false;
+  lookUnlocked = false;
+  stillSinceAt = null;
+  hasMovedSincePause = false;
+  pauseDurationMs = PAUSE_DURATION_BASE_MS;
+  clearResultCues();
+  statusIconPauseEl.setAttribute("hidden", "");
+  resetAnswer();
+
+  let highest = 0;
+  next.faces.forEach((f, i) => {
+    if (f.number > next.faces[highest].number) highest = i;
+  });
+  restQuaternion.copy(uprightFaceQuat(highest));
+  diceMesh.quaternion.copy(restQuaternion);
+  dieAppearStartAt = performance.now();
+  forceRenderPending = true;
+
+  for (const btn of diePickerEl.querySelectorAll(".die-btn")) {
+    btn.setAttribute("aria-pressed", String(btn.dataset.die === key));
+  }
+  try {
+    localStorage.setItem(DIE_STORAGE_KEY, key);
+  } catch {
+    // ignore -- still switches for this session
+  }
+}
+
+diePickerEl.addEventListener("click", (event) => {
+  const btn = event.target.closest(".die-btn");
+  if (btn && diceMesh) setDieType(btn.dataset.die);
+});
 
 function initDiceScene() {
   scene = new THREE.Scene();
@@ -1003,44 +1334,11 @@ function initDiceScene() {
   rim.position.set(-3, -1, 2);
   scene.add(ambient, key, rim);
 
-  const geometry = new THREE.IcosahedronGeometry(1, 0);
-  geometry.clearGroups();
-  for (let i = 0; i < 20; i++) geometry.addGroup(i * 3, 3, i);
-  faceNormals = computeFaceNormals(geometry);
-  faceUpVectors = computeFaceUpVectors(geometry, faceNormals);
-  assignPerFaceUVs(geometry);
-
-  // MeshStandardMaterial rather than MeshPhysicalMaterial: clearcoat adds a
-  // whole second specular shading pass per pixel (base layer + clearcoat
-  // layer), which is cheap to shrug off on a desktop GPU but a real,
-  // measurable cost on mobile GPUs rendering this canvas at up to 2x
-  // devicePixelRatio every frame during any roll/tilt/drag. Standard still
-  // gives the same metalness/roughness PBR look from the same texture,
-  // just without that extra layer.
-  const materials = FACES.map(
-    (face) =>
-      new THREE.MeshStandardMaterial({
-        map: makeFaceTexture(face.number),
-        color: 0xffffff, // texture already carries the final colors; no tint
-        roughness: 0.2,
-        metalness: 0.2,
-      })
-  );
-  diceMesh = new THREE.Mesh(geometry, materials);
-
-  const edgeLines = new THREE.LineSegments(
-    new THREE.EdgesGeometry(geometry),
-    new THREE.LineBasicMaterial({ color: 0x000000 })
-  );
-  diceMesh.add(edgeLines);
-
-  scene.add(diceMesh);
-
   // antialias:false -- MSAA multiplies the GPU's per-pixel fill cost across
   // the whole canvas every frame, a real cost on mobile GPUs. The capped
   // devicePixelRatio below already supersamples on any screen dense enough
   // to need it (most phones), and the die's facet edges are already inked
-  // by edgeLines above regardless of MSAA, so the softening MSAA would add
+  // by its edge lines regardless of MSAA, so the softening MSAA would add
   // is limited to the outer silhouette against the transparent background.
   // powerPreference:"high-performance" is a hint, not a guarantee, but on
   // devices with both a low-power and a high-power GPU (common on
@@ -1072,6 +1370,7 @@ function initDiceScene() {
   })();
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatioCap));
   resizeDiceRenderer();
+  setDieType(loadDieKey());
 }
 
 function resizeDiceRenderer() {
@@ -1086,63 +1385,106 @@ function resizeDiceRenderer() {
 
 window.addEventListener("resize", resizeDiceRenderer);
 
-// Scratch vector/quaternion, reused every frame instead of allocating
-// fresh THREE objects on this hot 60fps path.
-const tiltLookScratchAxis = new THREE.Vector3();
-const tiltLookScratchQuat = new THREE.Quaternion();
+// Scratch objects, reused every frame instead of allocating fresh THREE
+// objects on this hot 60fps path.
+const lookScratchAxis = new THREE.Vector3();
+const lookScratchQuat = new THREE.Quaternion();
+const lockTargetQuat = new THREE.Quaternion();
 
-// Tracks the phone's own orientation as of the last tick this ran, so each
-// call only has to apply the CHANGE since then -- not an absolute tilt
-// value the way the old idle spin worked. null until the first real tick
-// (can't take a delta against nothing).
+// Rotates the die in world space (premultiply) so "turn the phone right"
+// always turns the die the same screen-space direction regardless of its
+// current orientation. Both axes are combined into ONE rotation --
+// composing two separate single-axis rotations is order-dependent, since
+// rotations don't commute. Renormalized every call so repeated
+// premultiplication can't drift off the unit sphere.
+function rotateDieWorld(betaDeg, gammaDeg) {
+  const angleDeg = Math.hypot(betaDeg, gammaDeg);
+  if (angleDeg === 0) return;
+  lookScratchAxis.set(betaDeg / angleDeg, gammaDeg / angleDeg, 0);
+  lookScratchQuat.setFromAxisAngle(lookScratchAxis, angleDeg * DEG2RAD);
+  diceMesh.quaternion.premultiply(lookScratchQuat).normalize();
+}
+
+function smoothstep(edge0, edge1, x) {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+// How far the phone itself turned since the previous dice frame, sampled
+// EVERY frame (see diceFrame()) whether or not anything uses it. It used to
+// only be sampled inside updateTiltLook(), which is skipped during a roll or
+// settle -- so the first frame after a roll landed applied the entire
+// shake's worth of accumulated rotation in one jump. Prefers the gyro's own
+// rate when fresh: it's the lowest-latency signal, and look-around is
+// relative so gyro drift doesn't matter here. Falls back to the filtered
+// orientation's change otherwise.
 let lastTiltLookBeta = null;
 let lastTiltLookGamma = null;
+let tiltDeltaBeta = 0;
+let tiltDeltaGamma = 0;
+
+function sampleTiltDelta(now, dt) {
+  tiltDeltaBeta = 0;
+  tiltDeltaGamma = 0;
+  if (!hasOrientation) return;
+  if (isGyroFresh(now)) {
+    tiltDeltaBeta = gyroBeta * dt;
+    tiltDeltaGamma = gyroGamma * dt;
+  } else if (lastTiltLookBeta !== null) {
+    tiltDeltaBeta = angleDiffDeg(filteredBeta, lastTiltLookBeta);
+    tiltDeltaGamma = filteredGamma - lastTiltLookGamma;
+  }
+  lastTiltLookBeta = filteredBeta;
+  lastTiltLookGamma = filteredGamma;
+}
 
 // Returns whether it actually rotated the die this frame -- diceFrame()
 // uses that to decide whether the scene is dirty and needs a real render,
 // so a phone held rock-steady (nothing but sensor noise) doesn't force a
 // GPU draw call every single frame for no visible change.
 function updateTiltLook(dt) {
-  if (rolling || !diceMesh) return false;
+  if (dt <= 0) return false;
+  // A rate-based deadzone (not an absolute-angle one): ignores sensor
+  // jitter while genuinely still, but never blocks real movement
+  // regardless of how far from "zero" the phone is currently held -- there
+  // IS no zero here, only how much you're turning it right now, which is
+  // exactly what makes holding a tilt hold a fixed view.
+  const rateDegPerSec = Math.hypot(tiltDeltaBeta, tiltDeltaGamma) / dt;
+  const gain = smoothstep(TILT_LOOK_DEADZONE_LOW_DEG_PER_SEC, TILT_LOOK_DEADZONE_HIGH_DEG_PER_SEC, rateDegPerSec);
+  if (gain === 0) return false;
+  rotateDieWorld(tiltDeltaBeta * gain, tiltDeltaGamma * gain); // 1:1 with the phone once past the ramp
+  return true;
+}
 
-  if (lastTiltLookBeta === null) {
-    lastTiltLookBeta = filteredBeta;
-    lastTiltLookGamma = filteredGamma;
-    return false;
+function lockIn() {
+  frozen = true;
+  lookUnlocked = false;
+  lockRefBeta = filteredBeta;
+  lockRefGamma = filteredGamma;
+}
+
+// The locked pose: restQuaternion plus a small, capped lean with the
+// phone's tilt (see LOCK_PARALLAX_GAIN). Eases toward it rather than
+// snapping, which is also what glides the die back onto its face after a
+// look-around hold is released. Returns whether the die moved.
+function updateLockedPose(dt) {
+  const recenter = 1 - Math.exp(-dt / LOCK_REF_RECENTER_TAU);
+  lockRefBeta += angleDiffDeg(filteredBeta, lockRefBeta) * recenter;
+  lockRefGamma += (filteredGamma - lockRefGamma) * recenter;
+
+  const leanBeta = angleDiffDeg(filteredBeta, lockRefBeta) * LOCK_PARALLAX_GAIN;
+  const leanGamma = (filteredGamma - lockRefGamma) * LOCK_PARALLAX_GAIN;
+  const leanDeg = Math.hypot(leanBeta, leanGamma);
+  lockTargetQuat.copy(restQuaternion);
+  if (leanDeg > 0) {
+    const cappedDeg = Math.min(leanDeg, LOCK_PARALLAX_MAX_DEG);
+    lookScratchAxis.set(leanBeta / leanDeg, leanGamma / leanDeg, 0);
+    lookScratchQuat.setFromAxisAngle(lookScratchAxis, cappedDeg * DEG2RAD);
+    lockTargetQuat.premultiply(lookScratchQuat);
   }
 
-  const deltaBeta = filteredBeta - lastTiltLookBeta;
-  const deltaGamma = filteredGamma - lastTiltLookGamma;
-  lastTiltLookBeta = filteredBeta;
-  lastTiltLookGamma = filteredGamma;
-  if (dt <= 0) return false;
-
-  // A rate-based deadzone (not an absolute-angle one, unlike the old idle
-  // spin): ignores sensor jitter while genuinely still, but never blocks
-  // real movement regardless of how far from "zero" the phone is currently
-  // held -- there IS no zero here, only how much you're turning it right
-  // now, which is exactly what makes holding a tilt hold a fixed view.
-  const rateDegPerSec = Math.hypot(deltaBeta, deltaGamma) / dt;
-  if (rateDegPerSec < TILT_LOOK_DEADZONE_DEG_PER_SEC) return false;
-
-  // Both axes combined into ONE rotation (same reasoning as the old idle
-  // spin fix: composing two separate single-axis rotations is order-
-  // dependent and frame-rate dependent, since rotations don't commute).
-  // Here it's simpler still -- each tick applies the ACTUAL measured
-  // change directly, so there's no velocity to integrate or step-size to
-  // depend on: the total rotation over any stretch of real time is just
-  // the sum of the real deltas, however finely diceFrame() happens to
-  // sample them.
-  tiltLookScratchAxis.set(deltaBeta, deltaGamma, 0).normalize();
-  const angleRad = (Math.hypot(deltaBeta, deltaGamma) * Math.PI) / 180; // 1:1 with the phone's own rotation
-  const q = tiltLookScratchQuat.setFromAxisAngle(tiltLookScratchAxis, angleRad);
-  // Compose in world space (premultiply) so "turn the phone right" always
-  // turns the die the same screen-space direction regardless of its
-  // current orientation.
-  diceMesh.quaternion.premultiply(q);
-  // Repeated premultiplication accumulates floating-point error over many
-  // frames; renormalize every frame so it can't drift off the unit sphere.
-  diceMesh.quaternion.normalize();
+  if (diceMesh.quaternion.angleTo(lockTargetQuat) < LOCK_REST_EPSILON_RAD) return false;
+  diceMesh.quaternion.slerp(lockTargetQuat, 1 - Math.exp(-dt / LOCK_FOLLOW_TAU));
   return true;
 }
 
@@ -1157,47 +1499,59 @@ function updateTiltLook(dt) {
 // independent: this is purely visual, the accumulator is purely about
 // triggering a result.
 const DRAG_LOOK_DEG_PER_PX = 0.35;
-const dragLookScratchAxis = new THREE.Vector3();
-const dragLookScratchQuat = new THREE.Quaternion();
 
 function applyDragLook(dx, dy) {
-  if (!diceMesh || rolling || settleState) return;
+  if (!diceMesh || rolling || settleState || (frozen && !lookUnlocked)) return;
   if (dx === 0 && dy === 0) return;
   // Same axis convention as updateTiltLook(): horizontal movement turns
   // the die around the vertical axis, vertical movement around the
   // horizontal axis.
-  const deltaGamma = dx * DRAG_LOOK_DEG_PER_PX;
-  const deltaBeta = dy * DRAG_LOOK_DEG_PER_PX;
-  dragLookScratchAxis.set(deltaBeta, deltaGamma, 0).normalize();
-  const angleRad = (Math.hypot(deltaBeta, deltaGamma) * Math.PI) / 180;
-  const q = dragLookScratchQuat.setFromAxisAngle(dragLookScratchAxis, angleRad);
-  diceMesh.quaternion.premultiply(q);
-  diceMesh.quaternion.normalize();
+  rotateDieWorld(dy * DRAG_LOOK_DEG_PER_PX, dx * DRAG_LOOK_DEG_PER_PX);
   forceRenderPending = true; // runs outside diceFrame()'s own dirty tracking
 }
 
 // Purely a visual readout of how far you've tilted since the die came to
 // rest — no threshold, tilting never resumes spinning on its own. Only a
 // held-and-shaken roll does that.
-function updateFrozenFill() {
-  const deltaBeta = filteredBeta - frozenZeroBeta;
-  const deltaGamma = filteredGamma - frozenZeroGamma;
-  const progress = Math.min(Math.hypot(deltaBeta, deltaGamma) / TILT_VISUAL_RANGE_DEG, 1);
+let lastEscapeFillHeight = 0;
 
-  // Fills vertically (bottom to top) rather than sweeping around the
-  // circumference: a rect clipped to the circle grows from the bottom.
-  const fillHeight = progress * 100;
-  escapeRingFillEl.setAttribute("height", String(fillHeight));
-  escapeRingFillEl.setAttribute("y", String(100 - fillHeight));
+// Fills vertically (bottom to top) rather than sweeping around the
+// circumference: a rect clipped to the circle grows from the bottom.
+// Rounded to 0.1 of the 0-100 viewBox and skipped when unchanged, so a
+// steady phone doesn't force an SVG style/paint pass every frame.
+function setEscapeFill(height) {
+  const rounded = Math.round(height * 10) / 10;
+  if (rounded === lastEscapeFillHeight) return;
+  lastEscapeFillHeight = rounded;
+  escapeRingFillEl.setAttribute("height", String(rounded));
+  escapeRingFillEl.setAttribute("y", String(100 - rounded));
 }
 
+function updateFrozenFill() {
+  const deltaBeta = angleDiffDeg(filteredBeta, frozenZeroBeta);
+  const deltaGamma = filteredGamma - frozenZeroGamma;
+  setEscapeFill(Math.min(Math.hypot(deltaBeta, deltaGamma) / TILT_VISUAL_RANGE_DEG, 1) * 100);
+}
+
+// A new roll/reveal cycle outlives any fanfare held from a previous
+// natural 1/20 -- otherwise a stale glow could linger and misleadingly
+// suggest the CURRENT face is still critical after settling onto a
+// different one.
+function clearResultCues() {
+  viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
+  sigilLayerEl.style.setProperty("--sigil-glow", "0");
+  sigilLayerEl.style.setProperty("--sigil-glow-red", "0");
+  setEscapeFill(0);
+}
+
+const CAMERA_DIR = new THREE.Vector3(0, 0, 1);
+const faceScratchNormal = new THREE.Vector3();
+
 function findNearestFaceIndex() {
-  const cameraDir = new THREE.Vector3(0, 0, 1);
   let bestIndex = 0;
   let bestDot = -Infinity;
   for (let i = 0; i < faceNormals.length; i++) {
-    const worldNormal = faceNormals[i].clone().applyQuaternion(diceMesh.quaternion);
-    const dot = worldNormal.dot(cameraDir);
+    const dot = faceScratchNormal.copy(faceNormals[i]).applyQuaternion(diceMesh.quaternion).dot(CAMERA_DIR);
     if (dot > bestDot) {
       bestDot = dot;
       bestIndex = i;
@@ -1215,14 +1569,7 @@ function pauseAndReveal() {
   if (!diceMesh) return;
   rollState = null;
   setAnswerSeeking();
-
-  // A new reveal cycle starting outlives any fanfare held from a previous
-  // natural 1/20 -- otherwise a stale glow could linger and misleadingly
-  // suggest the CURRENT face is still critical after settling onto a
-  // different one.
-  viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
-  sigilLayerEl.style.setProperty("--sigil-glow", "0");
-  sigilLayerEl.style.setProperty("--sigil-glow-red", "0");
+  clearResultCues();
 
   // Recalibrate the "level" reference right now, not after the settle
   // animation finishes — the moment you pause is what defines the new
@@ -1230,11 +1577,8 @@ function pauseAndReveal() {
   // instantly rather than lagging ~300ms behind the pause.
   frozenZeroBeta = filteredBeta;
   frozenZeroGamma = filteredGamma;
-  escapeRingFillEl.setAttribute("height", "0");
-  escapeRingFillEl.setAttribute("y", "100");
 
   const nearestIndex = findNearestFaceIndex();
-  const cameraDir = new THREE.Vector3(0, 0, 1);
   const targetNormalLocal = faceNormals[nearestIndex].clone().normalize();
   // setFromUnitVectors(local, camera) alone would compute a fresh
   // "canonical" orientation from scratch, discarding whatever roll the die
@@ -1245,14 +1589,14 @@ function pauseAndReveal() {
   // current orientation, so the snap is minimal and preserves roll.
   const currentQuat = diceMesh.quaternion.clone();
   const currentWorldNormal = targetNormalLocal.clone().applyQuaternion(currentQuat);
-  const correctionQuat = new THREE.Quaternion().setFromUnitVectors(currentWorldNormal, cameraDir);
+  const correctionQuat = new THREE.Quaternion().setFromUnitVectors(currentWorldNormal, CAMERA_DIR);
   const alignedQuat = correctionQuat.multiply(currentQuat);
   // On top of that minimal correction, twist around the camera axis so the
   // revealed number reads upright — locking always straightens the number,
   // even though the face-alignment step above deliberately preserves
   // whatever roll the die happened to have.
-  const twist = uprightTwist(faceUpVectors[nearestIndex], alignedQuat, cameraDir);
-  const finalQuat = twist.multiply(alignedQuat);
+  const twist = uprightTwist(faceUpVectors[nearestIndex], alignedQuat, CAMERA_DIR);
+  const finalQuat = applyRestTilt(twist.multiply(alignedQuat));
 
   settleState = {
     startAt: performance.now(),
@@ -1276,7 +1620,7 @@ function updateSettle() {
     // The level/escape-threshold reference was already recalibrated back in
     // pauseAndReveal(); just start the "resting" state now that the visual
     // settle has actually finished.
-    frozen = true;
+    lockIn();
   }
 }
 
@@ -1284,7 +1628,7 @@ function updateSettle() {
 // for actual buttons — clicks on those should behave normally and not also
 // arm the roll gate. Holding down doesn't reveal or move the die by
 // itself; it only determines whether a shake that happens while held can
-// actually roll it (see handleMotionEvent) — reflected live by the
+// actually roll it (see processShakeSample) — reflected live by the
 // viewfinder's corner brackets (see .is-held in style.css), which double
 // as the lock indicator rather than a separate icon.
 function isInteractiveElement(target) {
@@ -1315,7 +1659,7 @@ function setPointerHeld(held) {
 // shaking the phone, for anyone on a device without a working
 // gyroscope/orientation sensor (desktop, denied permission) or who just
 // prefers touch. Feeds the drag's own speed/direction into the EXACT same
-// handleMotionEvent() pipeline a real device shake uses -- same
+// processShakeSample() pipeline a real device shake uses -- same
 // accumulator, same redirect threshold, same direction-driven spin axis --
 // rather than a separate roll path, so dragging genuinely IS "shaking it"
 // as far as the roll logic is concerned, not a lookalike. The one
@@ -1330,7 +1674,7 @@ let dragLastX = null;
 let dragLastY = null;
 let dragLastT = null;
 // Screen-space px/s of drag speed -> synthetic deg/s of "rotation rate",
-// fed to handleMotionEvent() with accumulate=false (see the call site) --
+// fed to processShakeSample() with accumulate=false (see the call site) --
 // so this only ever matters for the instant-spike check (against
 // DRAG_INSTANT_SPIKE_RATE_DEG_PER_SEC, not the real-shake threshold),
 // never the sustained accumulator. Tuned so a brisk flick (a few hundred
@@ -1344,27 +1688,43 @@ document.addEventListener("pointerdown", (event) => {
   if (isInteractiveElement(event.target)) return;
   event.preventDefault();
   setPointerHeld(true);
+  // A fresh press on a locked result unlocks a full look-around for as long
+  // as it's held (see lookUnlocked).
+  if (frozen) lookUnlocked = true;
   dragLastX = event.clientX;
   dragLastY = event.clientY;
   dragLastT = performance.now();
 });
 
-document.addEventListener("pointerup", () => {
+// Stats (including drag samples) are checkpointed by setPointerHeld(false)
+// ending the hold, rather than on every pointermove sample.
+function handlePointerRelease() {
   setPointerHeld(false);
+  lookUnlocked = false; // a locked die eases back onto its face (see updateLockedPose())
   dragLastX = null;
   dragLastY = null;
   dragLastT = null;
   liveDragSpeedDegPerSec = null;
-  saveStats(); // checkpoint here rather than on every pointermove sample
+}
+
+document.addEventListener("pointerup", handlePointerRelease);
+// Leaving the app mid-hold never delivers the pointerup, and coming back
+// shouldn't treat the time away as motion or stillness: drop the hold, and
+// restart the frame clock, tilt reference, shake accumulator and stillness
+// timer so the first frame back doesn't jump, roll or auto-reveal.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    handlePointerRelease();
+    return;
+  }
+  lastDiceFrameAt = null;
+  lastTiltLookBeta = null;
+  lastMotionEventAt = null;
+  rotationAccumDeg = 0;
+  rotationAccumPeakRate = 0;
+  stillSinceAt = null;
 });
-document.addEventListener("pointercancel", () => {
-  setPointerHeld(false);
-  dragLastX = null;
-  dragLastY = null;
-  dragLastT = null;
-  liveDragSpeedDegPerSec = null;
-  saveStats();
-});
+document.addEventListener("pointercancel", handlePointerRelease);
 
 document.addEventListener("pointermove", (event) => {
   if (!pointerHeld || dragLastX === null) return;
@@ -1397,11 +1757,7 @@ document.addEventListener("pointermove", (event) => {
   // PER_SEC -- a deliberately higher bar than a real device shake needs,
   // since a slow hold-and-drag to view faces can otherwise throw one noisy
   // rate sample past a lower bar) can still launch or redirect one.
-  handleMotionEvent(
-    { rotationRate: { beta: betaRate, gamma: gammaRate } },
-    false,
-    DRAG_INSTANT_SPIKE_RATE_DEG_PER_SEC
-  );
+  processShakeSample(betaRate, gammaRate, false, DRAG_INSTANT_SPIKE_RATE_DEG_PER_SEC);
 }, { passive: true }); // never calls preventDefault -- touch-action:none already owns gesture handling
 
 // A harder/faster shake spins the die faster: the peak rotation rate seen
@@ -1447,15 +1803,10 @@ function rollDice(peakRotationRate, betaRate, gammaRate) {
   frozen = false;
   settleState = null; // a shake mid-reveal takes priority; don't let it resume stale later
   rolling = true;
+  lookUnlocked = false;
   setAnswerSeeking();
   statusIconPauseEl.setAttribute("hidden", "");
-  // A new roll outlives any fanfare held from the previous result -- see
-  // the same reasoning in pauseAndReveal().
-  viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
-  sigilLayerEl.style.setProperty("--sigil-glow", "0");
-  sigilLayerEl.style.setProperty("--sigil-glow-red", "0");
-  escapeRingFillEl.setAttribute("height", "0");
-  escapeRingFillEl.setAttribute("y", "100");
+  clearResultCues();
 
   const intensityT = intensityFromPeakRate(peakRotationRate);
   const totalTurns = SHAKE_MIN_TURNS + intensityT * (SHAKE_MAX_TURNS - SHAKE_MIN_TURNS);
@@ -1464,16 +1815,11 @@ function rollDice(peakRotationRate, betaRate, gammaRate) {
   // already facing the camera instead of picking a fresh random one --
   // the same "current face" findNearestFaceIndex() reports for a
   // pause-reveal, just triggered by a shake instead of holding still.
-  const resultIndex = nonRandomRoll ? findNearestFaceIndex() : Math.floor(Math.random() * 20);
-  const cameraDir = new THREE.Vector3(0, 0, 1);
-  const targetNormal = faceNormals[resultIndex].clone().normalize();
-  const settleQuat = new THREE.Quaternion().setFromUnitVectors(targetNormal, cameraDir);
-  // Twist around the camera axis to land the number upright, rather than
-  // the arbitrary/random angle this used to settle at — the spin animation
-  // itself still looks dynamic (driven by spinAxis/totalTurns below), only
-  // the final resting orientation is now fixed to always read upright.
-  const twist = uprightTwist(faceUpVectors[resultIndex], settleQuat, cameraDir);
-  const finalQuat = twist.multiply(settleQuat);
+  const resultIndex = nonRandomRoll ? findNearestFaceIndex() : Math.floor(Math.random() * faceNormals.length);
+  // Lands the number upright -- the spin animation itself still looks
+  // dynamic (driven by spinAxis/totalTurns below), only the final resting
+  // orientation is fixed.
+  const finalQuat = uprightFaceQuat(resultIndex);
 
   rollState = {
     phase: "spin",
@@ -1496,8 +1842,8 @@ function updateRoll() {
     const t = Math.min((now - rollState.startAt) / SPIN_DURATION_MS, 1);
     const eased = easeOutCubic(t);
     const angle = eased * rollState.totalTurns * Math.PI * 2;
-    const q = new THREE.Quaternion().setFromAxisAngle(rollState.spinAxis, angle);
-    diceMesh.quaternion.copy(rollState.spinStartQuat).premultiply(q);
+    lookScratchQuat.setFromAxisAngle(rollState.spinAxis, angle);
+    diceMesh.quaternion.copy(rollState.spinStartQuat).premultiply(lookScratchQuat);
 
     if (t >= 1) {
       rollState.phase = "settle";
@@ -1521,14 +1867,14 @@ function updateRoll() {
     // reference now too, for the same reason pauseAndReveal() does: so the
     // resting-tilt fill and level light both start from zero instead of
     // measuring drift from a stale, possibly long-past reference.
-    frozen = true;
+    lockIn();
     frozenZeroBeta = filteredBeta;
     frozenZeroGamma = filteredGamma;
   }
 }
 
 // A shake that happens while NOT held can't roll the die (see
-// handleMotionEvent) — instead it "pulls" the die a short distance toward
+// processShakeSample) — instead it "pulls" the die a short distance toward
 // the shake's direction and springs it back, a felt-but-denied cue with no
 // rotation and no new result. Purely a position offset (diceMesh.position),
 // entirely independent of whatever rotation state (tilt-look/frozen/roll)
@@ -1543,7 +1889,8 @@ function pullDice(peakRotationRate, betaRate, gammaRate) {
   if (!diceMesh) return;
 
   const intensityT = intensityFromPeakRate(peakRotationRate);
-  const distance = PULL_DISTANCE_MIN + intensityT * (PULL_DISTANCE_MAX - PULL_DISTANCE_MIN);
+  const distance =
+    (PULL_DISTANCE_MIN + intensityT * (PULL_DISTANCE_MAX - PULL_DISTANCE_MIN)) * (frozen ? LOCKED_PULL_SCALE : 1);
 
   // Same axis convention as tilt/shake elsewhere: gamma (left/right) ->
   // screen X, beta (front/back) -> screen Y (inverted, since a positive
@@ -1663,6 +2010,17 @@ function spawnEmbers() {
   for (const el of emberPool) el.classList.add("is-live");
 }
 
+// Back to the resting state (a fresh die, before anything is asked of it):
+// no text, no pending reveal, no leftover reveal styling.
+function resetAnswer() {
+  cancelPendingReveal();
+  revealPulseStartAt = null;
+  answerFrameEl.classList.remove("is-revealed");
+  diceAnswerEl.classList.remove("is-seeking", "is-revealed");
+  mainEl.classList.remove("tone-yes", "tone-no", "tone-maybe");
+  diceAnswerEl.textContent = "";
+}
+
 function cancelPendingReveal() {
   if (pendingRevealTimer !== null) {
     clearTimeout(pendingRevealTimer);
@@ -1681,10 +2039,10 @@ function setAnswerSeeking() {
   diceAnswerEl.textContent = SEEKING_TEXT;
 }
 
-function playReveal(faceNumber, phrase, quiet) {
+function playReveal(tone, phrase, quiet) {
   cancelPendingReveal();
   mainEl.classList.remove("tone-yes", "tone-no", "tone-maybe");
-  mainEl.classList.add(toneForFace(faceNumber));
+  mainEl.classList.add(tone);
 
   restartAnimation(revealRingAEl, "is-bursting");
   if (quiet) {
@@ -1782,10 +2140,16 @@ function negativeIntensity(faceNumber) {
 function finishRoll(index, revealedByPause) {
   rolling = false;
   restQuaternion.copy(diceMesh.quaternion); // what Recenter jumps back to after looking around
-  const faceNumber = FACES[index].number;
-  playReveal(faceNumber, FACES[index].phrase, revealedByPause);
-  sigilLayerEl.style.setProperty("--sigil-glow", String(affirmativeIntensity(faceNumber)));
-  sigilLayerEl.style.setProperty("--sigil-glow-red", String(negativeIntensity(faceNumber)));
+  const face = currentDie.faces[index];
+  const faceNumber = face.number;
+  // Only the oracle (d20) carries verdict-tinted outcomes, sigil glows and
+  // fanfare; every other die just shows its number in the neutral gold.
+  const isOracle = currentDie.def.oracle === true;
+  playReveal(isOracle ? toneForFace(faceNumber) : "tone-yes", face.phrase, revealedByPause);
+  if (isOracle) {
+    sigilLayerEl.style.setProperty("--sigil-glow", String(affirmativeIntensity(faceNumber)));
+    sigilLayerEl.style.setProperty("--sigil-glow-red", String(negativeIntensity(faceNumber)));
+  }
 
   if (revealedByPause) statusIconPauseEl.removeAttribute("hidden");
   else statusIconPauseEl.setAttribute("hidden", "");
@@ -1796,7 +2160,7 @@ function finishRoll(index, revealedByPause) {
   // would skew the numbers toward whatever you last looked at.
   if (revealedByPause) {
     stats.totalPauseReveals++;
-  } else {
+  } else if (isOracle) {
     stats.totalRolls++;
     stats.faceCounts[faceNumber] = (stats.faceCounts[faceNumber] || 0) + 1;
     if (faceNumber === 20) stats.natural20Count++;
@@ -1808,13 +2172,13 @@ function finishRoll(index, revealedByPause) {
   // Only an actual rolled result can be a "natural 1" or "natural 20" --
   // settling wherever the die happens to be facing when the phone goes
   // still isn't a roll outcome, so it never triggers fanfare.
-  if (!revealedByPause && faceNumber === 20) triggerFanfare("success");
-  else if (!revealedByPause && faceNumber === 1) triggerFanfare("fail");
+  const critical = isOracle && !revealedByPause && (faceNumber === 20 || faceNumber === 1);
+  if (critical) triggerFanfare(faceNumber === 20 ? "success" : "fail");
 
   if (navigator.vibrate) {
     try {
-      if (!revealedByPause && faceNumber === 20) navigator.vibrate([40, 30, 40, 30, 90]);
-      else if (!revealedByPause && faceNumber === 1) navigator.vibrate([120, 60, 120]);
+      if (critical && faceNumber === 20) navigator.vibrate([40, 30, 40, 30, 90]);
+      else if (critical) navigator.vibrate([120, 60, 120]);
       else navigator.vibrate([30, 40, 30]);
     } catch {
       // ignore
@@ -1822,8 +2186,26 @@ function finishRoll(index, revealedByPause) {
   }
 }
 
+// The viewfinder frame itself is always visible; only its color cues
+// whether the die is currently frozen showing a revealed result (a
+// separate concept from the lock icon, which reflects pointerHeld). The
+// stage's is-locked/is-rolling drive the scrying-glass ambience in
+// style.css. Packed into one bitmask and only written on change -- these
+// used to be re-toggled every single frame.
+let lastVisualStateMask = -1;
+
+function syncVisualState() {
+  const locked = frozen && !lookUnlocked;
+  const mask = (frozen ? 1 : 0) | (locked ? 2 : 0) | (rolling ? 4 : 0);
+  if (mask === lastVisualStateMask) return;
+  lastVisualStateMask = mask;
+  viewfinderEl.classList.toggle("is-frozen", frozen);
+  stageEl.classList.toggle("is-locked", locked);
+  stageEl.classList.toggle("is-rolling", rolling);
+}
+
 function diceFrame(now) {
-  diceRafId = requestAnimationFrame(diceFrame);
+  requestAnimationFrame(diceFrame);
 
   if (lastDiceFrameAt === null) {
     lastDiceFrameAt = now;
@@ -1831,10 +2213,9 @@ function diceFrame(now) {
   const dt = Math.min((now - lastDiceFrameAt) / 1000, 0.1); // clamp for tab-switch pauses
   lastDiceFrameAt = now;
 
-  // The viewfinder frame itself is always visible; only its color cues
-  // whether the die is currently frozen showing a revealed result (a
-  // separate concept from the lock icon, which reflects pointerHeld).
-  viewfinderEl.classList.toggle("is-frozen", frozen);
+  updateSensors(now, dt);
+  sampleTiltDelta(now, dt);
+  syncVisualState();
 
   let dirty;
   if (rollState) {
@@ -1844,12 +2225,12 @@ function diceFrame(now) {
     updateSettle();
     dirty = true;
   } else if (frozen) {
-    // Look-around (tilt/drag) still works while frozen showing a result --
-    // that's the whole point: inspect every side of what you rolled. Only
-    // updateFrozenFill() is skipped from the dirty check itself since it
-    // only ever touches the SVG ring, never the 3D scene.
+    // Locked on the result: only a small lean with the phone, unless a
+    // fresh hold has unlocked a full look-around (see lookUnlocked).
+    // updateFrozenFill() is left out of the dirty check since it only ever
+    // touches the SVG ring, never the 3D scene.
     updateFrozenFill();
-    dirty = updateTiltLook(dt);
+    dirty = lookUnlocked ? updateTiltLook(dt) : updateLockedPose(dt);
   } else if (stillSinceAt !== null) {
     // A stillness attempt is in progress (see updatePauseDetection) --
     // hold the die exactly where it is rather than letting look-around
@@ -1870,7 +2251,18 @@ function diceFrame(now) {
   const pullWasActive = pullState !== null;
   updatePull();
   if (pullWasActive) dirty = true;
-  if (updateRevealPulse()) dirty = true; // same independence as the pull, see updateRevealPulse()
+  // The reveal pulse yields to the grow-in below, which owns diceMesh.scale
+  // for as long as it runs; a die switched mid-reveal simply skips its pulse.
+  if (dieAppearStartAt !== null) revealPulseStartAt = null;
+  else if (updateRevealPulse()) dirty = true; // same independence as the pull, see updateRevealPulse()
+
+  // A freshly switched-in die grows into place (see setDieType()).
+  if (dieAppearStartAt !== null) {
+    const t = Math.min((now - dieAppearStartAt) / DIE_APPEAR_MS, 1);
+    diceMesh.scale.setScalar(0.8 + 0.2 * easeOutCubic(t));
+    if (t >= 1) dieAppearStartAt = null;
+    dirty = true;
+  }
 
   if (!settingsPanelEl.hidden) updateLiveStatValues();
 
@@ -1897,7 +2289,7 @@ function startDiceRendering() {
     return;
   }
   lastDiceFrameAt = null;
-  diceRafId = requestAnimationFrame(diceFrame);
+  requestAnimationFrame(diceFrame);
 }
 
 // --- boot ---

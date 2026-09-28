@@ -63,8 +63,63 @@ main {
   justify-content: center;
   gap: 2rem;
   padding: 2rem;
-  padding-bottom: calc(2rem + env(safe-area-inset-bottom));
+  padding-bottom: 1rem; /* the die picker below owns the bottom safe area */
   text-align: center;
+}
+
+/* Die picker: one quiet row pinned under the stage. In normal flow (not
+   position:fixed) so it reserves its own space and never overlaps the
+   answer text on short screens. Buttons are real <button>s, which the
+   hold-to-roll surface already ignores (see isInteractiveElement()). */
+.die-picker {
+  display: flex;
+  justify-content: center;
+  gap: 0.15rem;
+  padding: 0.35rem 0.5rem calc(0.6rem + env(safe-area-inset-bottom));
+}
+
+.die-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 2.9rem;
+  min-height: 2.9rem;
+  padding: 0.3rem 0.2rem;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  color: var(--fg);
+  opacity: 0.4;
+  font: 600 0.62rem/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.2s ease, color 0.2s ease, background-color 0.2s ease;
+}
+
+.die-btn svg {
+  width: 1.3rem;
+  height: 1.3rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.die-btn:active {
+  opacity: 0.75;
+}
+
+.die-btn[aria-pressed="true"] {
+  opacity: 1;
+  color: var(--gold);
+  background: rgba(212, 175, 55, 0.08);
+}
+
+.die-btn:focus-visible {
+  outline: 1px solid rgba(212, 175, 55, 0.6);
+  outline-offset: 1px;
 }
 
 .stage {
@@ -207,6 +262,109 @@ main {
   }
   66% {
     transform: translate(-8%, 8%) scale(0.92);
+  }
+}
+
+/* Scrying glass: a dark rim vignette plus a faint top-left highlight, so
+   the stage reads as looking INTO an orb rather than at a flat square.
+   Sits behind the die (before .dice-canvas in the DOM) and only darkens the
+   outer ring the die never reaches, so it can never dim the numerals. */
+/* The resting glass look (vignette, sheen, bezel) now lives in the
+   viewfinder's eyepiece on top of the die -- see .lens-* below -- so this
+   layer paints nothing at rest and only hosts the rolling swirl (::after). */
+.scry-glass {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+/* A slow swirl that only shows while a roll is in flight -- the glass
+   "clouding over" as the die tumbles. Its rotation is paused (free) the
+   rest of the time rather than removed, so fading out never snaps it back
+   to 0deg mid-fade. */
+.scry-glass::after {
+  content: "";
+  position: absolute;
+  inset: 6%;
+  border-radius: 50%;
+  background: conic-gradient(
+    rgba(0, 0, 0, 0) 0% 18%,
+    rgba(212, 175, 55, 0.1) 30%,
+    rgba(0, 0, 0, 0) 45%,
+    rgba(244, 244, 245, 0.07) 64%,
+    rgba(0, 0, 0, 0) 80%
+  );
+  opacity: 0;
+  transition: opacity 0.8s ease;
+  animation: scry-swirl 1.8s linear infinite paused;
+  will-change: transform, opacity;
+}
+
+.stage.is-rolling .scry-glass::after {
+  opacity: 1;
+  animation-play-state: running;
+}
+
+@keyframes scry-swirl {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* A ring of irregular dashes and dots that reads as unreadable script,
+   turning very slowly. The rotation is on the <svg> element itself (an
+   HTML-level box the compositor can spin for free), not on its children,
+   which would repaint the SVG every frame. */
+.cipher-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.1;
+  animation: cipher-turn 140s linear infinite;
+  transition: opacity 1.2s ease;
+  will-change: transform;
+}
+
+.cipher-ring-glyphs {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 1.4;
+  stroke-dasharray: 0.4 1.1 2.2 0.9 0.4 0.6 1.4 2.6 0.3 1.8 3 1.2 0.5 0.9;
+}
+
+.cipher-ring-dots {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 0.5;
+  stroke-linecap: round;
+  stroke-dasharray: 0 3.6;
+}
+
+/* Sealed: a locked-in result brightens the script a touch; a roll in
+   flight brightens it further. */
+.stage.is-locked .cipher-ring {
+  opacity: 0.18;
+}
+
+.stage.is-rolling .cipher-ring {
+  opacity: 0.3;
+}
+
+@keyframes cipher-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mist-blob,
+  .cipher-ring,
+  .scry-glass::after,
+  .dice-answer.is-revealed {
+    animation: none;
   }
 }
 
