@@ -1,13 +1,13 @@
 {
   "name": "Magic Ask Ball",
   "short_name": "Ask Ball",
-  "description": "A shape that morphs when you move your phone",
+  "description": "Hold a question in mind, hold the screen, and shake. The die will answer.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0b0d12",
-  "theme_color": "#0b0d12",
+  "background_color": "#07060c",
+  "theme_color": "#07060c",
   "icons": [
     {
       "src": "icons/icon-192.png",

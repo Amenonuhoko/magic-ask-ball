@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#0b0d12" />
+  <meta name="theme-color" content="#07060c" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Ask Ball" />
@@ -20,6 +20,15 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <!-- Fixed star field behind everything. Two single-element layers whose
+       many box-shadows are painted once and then only ever animate opacity
+       (a slow, offset twinkle), so the compositor carries them for close to
+       nothing -- same discipline as the mist: no filters, no per-frame
+       repaint. -->
+  <div class="cosmos" aria-hidden="true">
+    <div class="stars stars-a"></div>
+    <div class="stars stars-b"></div>
+  </div>
   <main>
     <div id="stage" class="stage">
       <!-- Sigil preview, drawn BEHIND the die on purpose (same reasoning as
@@ -33,7 +42,12 @@
            light/mist already do. Shares one viewBox with the two "behind"
            layers below for the same 0-100 coordinate convention as the
            viewfinder. -->
-      <svg id="sigil-layer" class="sigil-layer" viewBox="0 0 100 100">
+      <div id="sigil-layer" class="sigil-layer">
+      <!-- Each mark lives in its own <svg> (not two <g>s in one) so each can
+           carry its own glacial CSS rotation -- one clockwise, one counter --
+           as a composited transform on a whole-element layer. Rotating the
+           <g> instead would repaint the filtered linework every frame. -->
+      <svg class="sigil-svg sigil-svg-vessel" viewBox="0 0 100 100">
         <!-- PREVIEW ONLY: "Bound Vessel" from the sigil concepts (see
              https://claude.ai/code/artifact/33c37e50-a122-48aa-8380-16731180c044),
              scaled 0.5x from its original 200x200 drawing into this
@@ -72,7 +86,8 @@
           <line x1="44.34" y1="55.66" x2="42.22" y2="57.78" />
           <line x1="44.34" y1="44.34" x2="42.22" y2="42.22" />
         </g>
-
+      </svg>
+      <svg class="sigil-svg sigil-svg-ward" viewBox="0 0 100 100">
         <!-- "Seed Ward" (design #1 from the same moodboard), superimposed
              alongside Bound Vessel rather than replacing it -- a classic
              flower-of-life: 7 circles of equal radius, one centered and 6
@@ -96,6 +111,7 @@
           <circle cx="50" cy="50" r="1" />
         </g>
       </svg>
+      </div>
       <!-- Level indicator, drawn BEHIND the die on purpose: a soft glow
            roughly the die's own size, centered on it and only shifting a
            little with tilt, so at rest it's fully covered by the die and
@@ -120,6 +136,11 @@
         <div class="mist-blob mist-blob-b"></div>
         <div class="mist-blob mist-blob-c"></div>
       </div>
+      <!-- One-shot flare BEHIND the die at the moment of a reveal (see
+           playReveal() in app.js): tinted by outcome, it lights up the space
+           around the silhouette and fades. Idle it is fully transparent and
+           costs nothing. -->
+      <div id="reveal-bloom" class="reveal-bloom" aria-hidden="true"></div>
       <canvas id="dice-canvas" class="dice-canvas"></canvas>
       <svg id="viewfinder" class="viewfinder" viewBox="0 0 100 100">
         <defs>
@@ -170,8 +191,23 @@
           <rect x="51.5" y="84" width="2.5" height="9" rx="1" class="vf-icon-fill" />
         </g>
       </svg>
+      <!-- Reveal event layers ON TOP of the die: two shockwave rings that
+           expand from the die's edge, and a pool of ember particles that
+           scatter outward from its rim (filled/positioned by app.js). All
+           one-shot, transform/opacity-only animations. -->
+      <div id="reveal-ring-a" class="reveal-ring reveal-ring-a" aria-hidden="true"></div>
+      <div id="reveal-ring-b" class="reveal-ring reveal-ring-b" aria-hidden="true"></div>
+      <div id="ember-layer" class="ember-layer" aria-hidden="true"></div>
     </div>
-    <p id="dice-answer" class="dice-answer">Shake to roll</p>
+    <!-- The verdict. Bracketed by two hairline rules that draw themselves in
+         as the words materialize; the text itself is the prompt at rest,
+         a pulsing "Seeking" while the die is in motion, and the revealed
+         phrase (tinted by outcome) after the event. -->
+    <div id="answer-frame" class="answer-frame">
+      <span class="answer-rule" aria-hidden="true"></span>
+      <p id="dice-answer" class="dice-answer is-prompt">Hold a question in mind</p>
+      <span class="answer-rule" aria-hidden="true"></span>
+    </div>
     <p id="status" class="status">Loading…</p>
     <button id="enable-motion" class="enable-motion" hidden>Enable sensors</button>
   </main>

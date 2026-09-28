@@ -30,6 +30,17 @@ const statHoldCurrentEl = document.getElementById("stat-hold-current");
 const statHoldAvgEl = document.getElementById("stat-hold-avg");
 const statHoldLongestEl = document.getElementById("stat-hold-longest");
 const statsResetBtn = document.getElementById("stats-reset-btn");
+const mainEl = document.querySelector("main");
+const answerFrameEl = document.getElementById("answer-frame");
+const revealBloomEl = document.getElementById("reveal-bloom");
+const revealRingAEl = document.getElementById("reveal-ring-a");
+const revealRingBEl = document.getElementById("reveal-ring-b");
+const emberLayerEl = document.getElementById("ember-layer");
+
+// The one-line hint under the die once sensors are live. Cleared the first
+// time a result is revealed -- by then it's been demonstrated, and the
+// verdict deserves the space to itself.
+const READY_HINT = "hold the screen · shake or flick to ask";
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -454,14 +465,14 @@ function initOrientation() {
       if (orientationOk) {
         enableBtn.hidden = true;
         startListening();
-        setStatus(motionOk ? "" : "Gyro/shake permission denied — tilt features only.");
+        setStatus(motionOk ? READY_HINT : "Gyro/shake permission denied — tilt features only.");
       } else {
         setStatus("Sensor permission denied.");
       }
     });
   } else {
     startListening();
-    setStatus("");
+    setStatus(READY_HINT);
   }
 }
 
@@ -990,10 +1001,16 @@ function initDiceScene() {
   camera = new THREE.PerspectiveCamera(45, 1, 0.1, 10);
   camera.position.set(0, 0, 3.2);
 
-  const ambient = new THREE.AmbientLight(0xffffff, 0.35);
-  const key = new THREE.DirectionalLight(0xffffff, 1.1);
+  // Two-tone rather than neutral white: a warm, candle-gold key light and a
+  // cold violet rim, with a violet-tinted ambient so the obsidian's shadow
+  // side reads as deep dusk rather than dead black. Same three lights,
+  // same cost -- only their colors changed -- and the gold numerals stay
+  // legible because the key (the light the camera-facing face actually
+  // catches) is only warmed, not dimmed.
+  const ambient = new THREE.AmbientLight(0x9d94c8, 0.34);
+  const key = new THREE.DirectionalLight(0xffe9c4, 1.15);
   key.position.set(2, 3, 4);
-  const rim = new THREE.DirectionalLight(0xffffff, 0.5);
+  const rim = new THREE.DirectionalLight(0x6f7cff, 0.7);
   rim.position.set(-3, -1, 2);
   scene.add(ambient, key, rim);
 
@@ -1208,6 +1225,7 @@ function findNearestFaceIndex() {
 function pauseAndReveal() {
   if (!diceMesh) return;
   rollState = null;
+  setAnswerSeeking();
 
   // A new reveal cycle starting outlives any fanfare held from a previous
   // natural 1/20 -- otherwise a stale glow could linger and misleadingly
@@ -1440,7 +1458,7 @@ function rollDice(peakRotationRate, betaRate, gammaRate) {
   frozen = false;
   settleState = null; // a shake mid-reveal takes priority; don't let it resume stale later
   rolling = true;
-  diceAnswerEl.textContent = "Rolling…";
+  setAnswerSeeking();
   statusIconPauseEl.setAttribute("hidden", "");
   // A new roll outlives any fanfare held from the previous result -- see
   // the same reasoning in pauseAndReveal().
@@ -1581,6 +1599,147 @@ function updatePull() {
 // that hold lasts for as long as the natural 1/20 stays the current
 // result -- only cleared where frozen is reset to false, i.e. the next
 // roll (rollDice) or reveal cycle (pauseAndReveal) starting.
+// --- the reveal event ---
+//
+// A result used to be a text swap: the die stopped and the phrase was
+// simply there. Now the stop is a beat, and the answer is an event that
+// plays out over about a second and a half, all in layers that already
+// exist in the DOM and only ever animate transform/opacity (see the
+// matching rules in style.css):
+//   t=0     the die "breathes" (a small scale pulse, see updateRevealPulse),
+//           a bloom flares behind it, two shockwave rings leave its edge,
+//           and a burst of embers scatters from its rim
+//   t=~380  the verdict materializes out of a blur, bracketed by two rules
+//           drawing themselves in
+// Everything is tinted by the outcome -- gold for the Yes half, ember red
+// for the No half, cold moonlight for the Try-again middle -- via a tone
+// class on <main> that the CSS custom properties key off.
+//
+// A pause-reveal (the phone going still on whatever face was already
+// showing, not a rolled outcome) gets a quieter cut of the same event: one
+// ring and the text, no bloom or embers, so a genuine roll still lands
+// visibly harder than merely holding still.
+const SEEKING_TEXT = "Seeking…";
+const REVEAL_TEXT_DELAY_MS = 380;
+const QUIET_REVEAL_TEXT_DELAY_MS = 220;
+const EMBER_COUNT = 26;
+let pendingRevealTimer = null;
+
+function toneForFace(faceNumber) {
+  if (faceNumber <= 8) return "tone-no"; // No + Maybe not
+  if (faceNumber <= 12) return "tone-maybe"; // Try again
+  return "tone-yes"; // Maybe yes + Yes
+}
+
+// Remove-reflow-add so re-applying the same class restarts its CSS
+// animation instead of being a no-op (same trick triggerFanfare uses).
+function restartAnimation(el, className) {
+  el.classList.remove(className);
+  void el.offsetWidth;
+  el.classList.add(className);
+}
+
+// Pool of ember particles, created once. Each burst re-randomizes their
+// start (on the die's rim), end (farther out and drifting upward), delay
+// and duration via inline custom properties the keyframes read.
+const emberPool = [];
+for (let i = 0; i < EMBER_COUNT; i++) {
+  const el = document.createElement("span");
+  el.className = "ember";
+  emberLayerEl.appendChild(el);
+  emberPool.push(el);
+}
+
+function spawnEmbers() {
+  const size = stageEl.getBoundingClientRect().width;
+  for (const el of emberPool) {
+    el.classList.remove("is-live");
+    const angle = Math.random() * Math.PI * 2;
+    // The die's silhouette is ~37% of the stage from center (circumradius 1
+    // at camera distance 3.2 with a 45deg fov); start just inside that edge.
+    const r0 = size * (0.33 + Math.random() * 0.05);
+    const r1 = r0 + size * (0.12 + Math.random() * 0.3);
+    const lift = size * (0.06 + Math.random() * 0.14); // embers rise
+    el.style.setProperty("--sx", `${(Math.cos(angle) * r0).toFixed(1)}px`);
+    el.style.setProperty("--sy", `${(Math.sin(angle) * r0).toFixed(1)}px`);
+    el.style.setProperty("--ex", `${(Math.cos(angle) * r1).toFixed(1)}px`);
+    el.style.setProperty("--ey", `${(Math.sin(angle) * r1 - lift).toFixed(1)}px`);
+    el.style.setProperty("--ed", `${Math.round(Math.random() * 260)}ms`);
+    el.style.setProperty("--et", `${Math.round(1100 + Math.random() * 700)}ms`);
+    const px = (2.5 + Math.random() * 2.5).toFixed(1);
+    el.style.width = `${px}px`;
+    el.style.height = `${px}px`;
+  }
+  void emberLayerEl.offsetWidth;
+  for (const el of emberPool) el.classList.add("is-live");
+}
+
+function cancelPendingReveal() {
+  if (pendingRevealTimer !== null) {
+    clearTimeout(pendingRevealTimer);
+    pendingRevealTimer = null;
+  }
+}
+
+// The die is in motion (a roll, or a settle onto the current face): the
+// question is being asked. Any reveal still waiting to print its text is
+// stale now -- a new outcome is on its way.
+function setAnswerSeeking() {
+  cancelPendingReveal();
+  answerFrameEl.classList.remove("is-revealed");
+  diceAnswerEl.classList.remove("is-prompt", "is-revealed");
+  diceAnswerEl.classList.add("is-seeking");
+  diceAnswerEl.textContent = SEEKING_TEXT;
+}
+
+function playReveal(faceNumber, phrase, quiet) {
+  cancelPendingReveal();
+  mainEl.classList.remove("tone-yes", "tone-no", "tone-maybe");
+  mainEl.classList.add(toneForFace(faceNumber));
+
+  restartAnimation(revealRingAEl, "is-bursting");
+  if (quiet) {
+    revealRingBEl.classList.remove("is-bursting");
+    revealBloomEl.classList.remove("is-flaring");
+    for (const el of emberPool) el.classList.remove("is-live");
+  } else {
+    restartAnimation(revealRingBEl, "is-bursting");
+    restartAnimation(revealBloomEl, "is-flaring");
+    spawnEmbers();
+  }
+  revealPulseStartAt = performance.now();
+
+  pendingRevealTimer = setTimeout(() => {
+    pendingRevealTimer = null;
+    diceAnswerEl.classList.remove("is-prompt", "is-seeking");
+    diceAnswerEl.textContent = phrase;
+    restartAnimation(diceAnswerEl, "is-revealed");
+    restartAnimation(answerFrameEl, "is-revealed");
+    if (statusEl.textContent === READY_HINT) setStatus("");
+  }, quiet ? QUIET_REVEAL_TEXT_DELAY_MS : REVEAL_TEXT_DELAY_MS);
+}
+
+// The die itself swells and relaxes for half a second at the moment of
+// reveal -- the physical anchor of the event. Purely diceMesh.scale, so it
+// layers over whatever rotation/position state is active, the same way a
+// pull does; returns true while it's still animating so the frame is
+// rendered.
+const REVEAL_PULSE_DURATION_MS = 520;
+const REVEAL_PULSE_AMOUNT = 0.06;
+let revealPulseStartAt = null;
+
+function updateRevealPulse() {
+  if (revealPulseStartAt === null || !diceMesh) return false;
+  const t = Math.min((performance.now() - revealPulseStartAt) / REVEAL_PULSE_DURATION_MS, 1);
+  if (t >= 1) {
+    diceMesh.scale.setScalar(1);
+    revealPulseStartAt = null;
+    return true; // one last frame at exactly 1
+  }
+  diceMesh.scale.setScalar(1 + REVEAL_PULSE_AMOUNT * Math.sin(t * Math.PI));
+  return true;
+}
+
 function triggerFanfare(kind) {
   viewfinderEl.classList.remove("is-critical-success", "is-critical-fail");
   // Force a reflow so re-adding the same class restarts its CSS animation
@@ -1636,7 +1795,7 @@ function finishRoll(index, revealedByPause) {
   rolling = false;
   restQuaternion.copy(diceMesh.quaternion); // what Recenter jumps back to after looking around
   const faceNumber = FACES[index].number;
-  diceAnswerEl.textContent = FACES[index].phrase;
+  playReveal(faceNumber, FACES[index].phrase, revealedByPause);
   sigilLayerEl.style.setProperty("--sigil-glow", String(affirmativeIntensity(faceNumber)));
   sigilLayerEl.style.setProperty("--sigil-glow-red", String(negativeIntensity(faceNumber)));
 
@@ -1723,6 +1882,7 @@ function diceFrame(now) {
   const pullWasActive = pullState !== null;
   updatePull();
   if (pullWasActive) dirty = true;
+  if (updateRevealPulse()) dirty = true; // same independence as the pull, see updateRevealPulse()
 
   if (!settingsPanelEl.hidden) updateLiveStatValues();
 

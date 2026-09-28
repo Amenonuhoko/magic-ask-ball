@@ -1,9 +1,28 @@
 :root {
   color-scheme: dark;
-  --bg: #0b0d12;
+  --bg: #07060c;
   --fg: #f4f4f5;
   --accent: #d4af37;
   --gold: #d4af37;
+  /* Outcome tints for the reveal event. --reveal-color is the crisp hue
+     (rings, embers, the answer's own letters); --reveal-glow is its soft
+     halo. Defaults are gold; main.tone-no / main.tone-maybe (set in
+     app.js from the revealed face) swap both. */
+  --reveal-color: var(--gold);
+  --reveal-glow: rgba(212, 175, 55, 0.55);
+}
+
+/* Ember red for the No half of the die, cold moonlight for the four
+   Try-again faces in the middle -- so the color of the event itself tells
+   you the verdict's direction before you've read a word. */
+main.tone-no {
+  --reveal-color: #ff6a55;
+  --reveal-glow: rgba(255, 90, 70, 0.5);
+}
+
+main.tone-maybe {
+  --reveal-color: #d6dbf2;
+  --reveal-glow: rgba(200, 208, 240, 0.45);
 }
 
 * {
@@ -21,8 +40,16 @@ html, body {
   user-select: none;
 }
 
+/* Not a flat color anymore: a deep indigo core that falls off to near
+   black at the edges (a vignette that pulls the eye to the die), plus a
+   faint cold nebula low in one corner for depth. Static gradients, painted
+   once -- the only things that ever animate in the background are the star
+   layers' opacity. */
 body {
-  background: var(--bg);
+  background:
+    radial-gradient(ellipse 85% 65% at 50% 42%, rgba(58, 44, 110, 0.5) 0%, rgba(24, 18, 48, 0.35) 40%, rgba(0, 0, 0, 0) 76%),
+    radial-gradient(ellipse 55% 45% at 18% 95%, rgba(22, 70, 84, 0.22) 0%, rgba(0, 0, 0, 0) 70%),
+    var(--bg);
   color: var(--fg);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   display: flex;
@@ -31,6 +58,8 @@ body {
 }
 
 main {
+  position: relative;
+  z-index: 1; /* above .cosmos */
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -40,6 +69,158 @@ main {
   padding: 2rem;
   padding-bottom: calc(2rem + env(safe-area-inset-bottom));
   text-align: center;
+}
+
+/* --- star field --- */
+
+.cosmos {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* One 2px dot per layer; every other star is one of its box-shadows, in
+   viewport units so the field scales with the screen. Painted once; the
+   twinkle is opacity-only on the whole layer, two layers out of phase so
+   it never reads as a single synchronized blink. */
+.stars {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  will-change: opacity;
+  animation: twinkle 9s ease-in-out infinite;
+}
+
+.stars-a {
+  box-shadow:
+    0.0vw 92.1vh 0 0 rgba(212, 175, 55, 0.46),
+    72.9vw 53.3vh 0 0 rgba(240, 240, 250, 0.73),
+    75.5vw 54.3vh 0 0 rgba(240, 240, 250, 0.67),
+    81.7vw 24.2vh 0 0 rgba(240, 240, 250, 0.70),
+    69.8vw 5.4vh 0 0 rgba(240, 240, 250, 0.58),
+    92.2vw 80.7vh 0 0.6px rgba(240, 240, 250, 0.61),
+    92.3vw 68.9vh 0 0 rgba(240, 240, 250, 0.64),
+    91.2vw 90.8vh 0 0 rgba(150, 170, 255, 0.52),
+    83.7vw 33.2vh 0 0.6px rgba(240, 240, 250, 0.50),
+    42.8vw 29.5vh 0 0 rgba(212, 175, 55, 0.63),
+    72.9vw 87.8vh 0 0.6px rgba(240, 240, 250, 0.49),
+    56.1vw 50.9vh 0 0 rgba(240, 240, 250, 0.45),
+    90.9vw 5.5vh 0 0 rgba(240, 240, 250, 0.52),
+    66.4vw 92.4vh 0 0 rgba(240, 240, 250, 0.43),
+    40.6vw 28.4vh 0 0 rgba(150, 170, 255, 0.56),
+    33.3vw 53.2vh 0 0 rgba(240, 240, 250, 0.47),
+    90.6vw 45.8vh 0 0 rgba(240, 240, 250, 0.67),
+    63.4vw 51.6vh 0 0 rgba(240, 240, 250, 0.69),
+    94.0vw 39.7vh 0 0 rgba(212, 175, 55, 0.48),
+    58.7vw 35.1vh 0 0 rgba(240, 240, 250, 0.55),
+    79.5vw 87.8vh 0 0.6px rgba(240, 240, 250, 0.76),
+    7.8vw 40.7vh 0 0.6px rgba(150, 170, 255, 0.39),
+    99.6vw 22.0vh 0 0 rgba(240, 240, 250, 0.42),
+    45.7vw 59.3vh 0 0.6px rgba(240, 240, 250, 0.81),
+    88.5vw 89.1vh 0 0 rgba(240, 240, 250, 0.80),
+    76.1vw 27.5vh 0 0.6px rgba(240, 240, 250, 0.47),
+    7.6vw 0.2vh 0 0 rgba(240, 240, 250, 0.47),
+    74.1vw 48.9vh 0 0 rgba(212, 175, 55, 0.47),
+    88.2vw 23.5vh 0 0 rgba(150, 170, 255, 0.80),
+    11.8vw 48.9vh 0 0.6px rgba(240, 240, 250, 0.81),
+    63.7vw 92.2vh 0 0.6px rgba(240, 240, 250, 0.80),
+    18.8vw 96.9vh 0 0 rgba(240, 240, 250, 0.69),
+    26.6vw 22.3vh 0 0 rgba(240, 240, 250, 0.63),
+    5.2vw 76.9vh 0 0 rgba(240, 240, 250, 0.71),
+    49.8vw 3.3vh 0 0.6px rgba(240, 240, 250, 0.81),
+    13.1vw 68.8vh 0 0 rgba(150, 170, 255, 0.37),
+    88.3vw 86.1vh 0 0 rgba(212, 175, 55, 0.83),
+    76.5vw 42.0vh 0 0 rgba(240, 240, 250, 0.71),
+    88.2vw 39.8vh 0 0 rgba(240, 240, 250, 0.55),
+    88.7vw 55.9vh 0 0 rgba(240, 240, 250, 0.66),
+    73.5vw 33.5vh 0 0 rgba(240, 240, 250, 0.56),
+    19.9vw 31.2vh 0 0 rgba(240, 240, 250, 0.85),
+    63.2vw 87.2vh 0 0 rgba(150, 170, 255, 0.45),
+    64.5vw 13.5vh 0 0 rgba(240, 240, 250, 0.63),
+    77.1vw 94.6vh 0 0 rgba(240, 240, 250, 0.44),
+    44.7vw 16.6vh 0 0 rgba(212, 175, 55, 0.61),
+    56.2vw 50.7vh 0 0 rgba(240, 240, 250, 0.53),
+    75.1vw 2.6vh 0 0 rgba(240, 240, 250, 0.62),
+    20.3vw 72.3vh 0 0 rgba(240, 240, 250, 0.47),
+    66.0vw 42.9vh 0 0.6px rgba(150, 170, 255, 0.74),
+    82.3vw 91.5vh 0 0 rgba(240, 240, 250, 0.69),
+    95.9vw 2.5vh 0 0 rgba(240, 240, 250, 0.65),
+    72.4vw 89.8vh 0 0.6px rgba(240, 240, 250, 0.42),
+    8.0vw 10.8vh 0 0.6px rgba(240, 240, 250, 0.35),
+    60.5vw 94.6vh 0 0 rgba(212, 175, 55, 0.42),
+    20.2vw 67.5vh 0 0 rgba(240, 240, 250, 0.58),
+    99.4vw 42.3vh 0 0 rgba(150, 170, 255, 0.74),
+    39.7vw 41.6vh 0 0.6px rgba(240, 240, 250, 0.47),
+    80.8vw 97.4vh 0 0.6px rgba(240, 240, 250, 0.81),
+    50.9vw 12.2vh 0 0 rgba(240, 240, 250, 0.65),
+    17.1vw 7.8vh 0 0 rgba(240, 240, 250, 0.67),
+    55.6vw 48.1vh 0 0 rgba(240, 240, 250, 0.39),
+    41.3vw 31.4vh 0 0.6px rgba(240, 240, 250, 0.35),
+    41.3vw 9.1vh 0 0 rgba(212, 175, 55, 0.81);
+}
+
+.stars-b {
+  animation-duration: 13s;
+  animation-delay: -5s;
+  box-shadow:
+    77.7vw 76.4vh 0 0 rgba(212, 175, 55, 0.78),
+    96.2vw 80.1vh 0 0 rgba(240, 240, 250, 0.64),
+    34.8vw 40.7vh 0 0 rgba(240, 240, 250, 0.60),
+    56.7vw 72.2vh 0 0 rgba(240, 240, 250, 0.67),
+    72.9vw 88.5vh 0 0 rgba(240, 240, 250, 0.84),
+    43.8vw 48.7vh 0 0 rgba(150, 170, 255, 0.84),
+    35.8vw 7.9vh 0 0 rgba(240, 240, 250, 0.79),
+    70.8vw 73.8vh 0 0 rgba(240, 240, 250, 0.74),
+    20.7vw 23.8vh 0 0 rgba(240, 240, 250, 0.40),
+    91.6vw 80.0vh 0 0 rgba(240, 240, 250, 0.71),
+    53.6vw 44.3vh 0 0 rgba(150, 170, 255, 0.63),
+    87.4vw 27.1vh 0 0 rgba(212, 175, 55, 0.57),
+    39.5vw 18.8vh 0 0 rgba(240, 240, 250, 0.47),
+    89.9vw 82.2vh 0 0 rgba(240, 240, 250, 0.69),
+    87.7vw 11.6vh 0 0 rgba(240, 240, 250, 0.81),
+    0.1vw 13.2vh 0 0 rgba(150, 170, 255, 0.36),
+    69.3vw 89.8vh 0 0.6px rgba(240, 240, 250, 0.46),
+    94.7vw 70.0vh 0 0.6px rgba(240, 240, 250, 0.41),
+    62.7vw 1.6vh 0 0 rgba(240, 240, 250, 0.65),
+    75.1vw 12.8vh 0 0 rgba(240, 240, 250, 0.71),
+    95.5vw 54.8vh 0 0 rgba(150, 170, 255, 0.74),
+    70.2vw 73.4vh 0 0 rgba(240, 240, 250, 0.40),
+    4.5vw 61.3vh 0 0 rgba(212, 175, 55, 0.64),
+    25.1vw 22.3vh 0 0 rgba(240, 240, 250, 0.66),
+    81.3vw 23.9vh 0 0 rgba(240, 240, 250, 0.38),
+    69.1vw 40.7vh 0 0 rgba(150, 170, 255, 0.68),
+    80.5vw 10.5vh 0 0 rgba(240, 240, 250, 0.60),
+    82.3vw 42.5vh 0 0 rgba(240, 240, 250, 0.75),
+    72.7vw 90.8vh 0 0 rgba(240, 240, 250, 0.45),
+    72.0vw 15.5vh 0 0.6px rgba(240, 240, 250, 0.82),
+    95.5vw 5.6vh 0 0.6px rgba(150, 170, 255, 0.48),
+    94.1vw 87.0vh 0 0 rgba(240, 240, 250, 0.49),
+    19.8vw 3.0vh 0 0 rgba(240, 240, 250, 0.63),
+    14.2vw 32.3vh 0 0 rgba(212, 175, 55, 0.46),
+    5.5vw 4.4vh 0 0.6px rgba(240, 240, 250, 0.66),
+    46.8vw 80.8vh 0 0 rgba(150, 170, 255, 0.61),
+    70.0vw 38.8vh 0 0 rgba(240, 240, 250, 0.83),
+    77.1vw 96.2vh 0 0 rgba(240, 240, 250, 0.65),
+    80.3vw 17.1vh 0 0.6px rgba(240, 240, 250, 0.71),
+    64.7vw 43.1vh 0 0 rgba(240, 240, 250, 0.54),
+    49.4vw 12.2vh 0 0.6px rgba(150, 170, 255, 0.39),
+    35.4vw 34.5vh 0 0 rgba(240, 240, 250, 0.67),
+    12.5vw 5.2vh 0 0.6px rgba(240, 240, 250, 0.77),
+    86.9vw 4.4vh 0 0 rgba(240, 240, 250, 0.51);
+}
+
+@keyframes twinkle {
+  0%, 100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.9;
+  }
 }
 
 .stage {
@@ -67,6 +248,36 @@ main {
   height: calc(100% + 24px);
   pointer-events: none;
   overflow: visible;
+}
+
+/* The two marks turn, barely -- one full revolution every few minutes, in
+   opposite directions -- so the space behind the die reads as a slow
+   mechanism rather than a static decal. Animated on the <svg> element (a
+   whole-element compositor layer, rasterized once with its filters baked
+   in) rather than on the <g>, which would re-rasterize the drop-shadowed
+   linework every frame. */
+.sigil-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  will-change: transform;
+  animation: sigil-turn 240s linear infinite;
+}
+
+.sigil-svg-ward {
+  animation-duration: 320s;
+  animation-direction: reverse;
+}
+
+@keyframes sigil-turn {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .level-light-layer {
@@ -160,6 +371,121 @@ main {
   inset: 0;
   width: 100%;
   height: 100%;
+}
+
+/* --- the reveal event --- */
+
+/* Flare behind the die: a soft disc of the outcome's glow that blooms out
+   past the silhouette and fades. Transparent at rest; only ever animates
+   transform/opacity while .is-flaring is on (toggled by playReveal()). */
+.reveal-bloom {
+  position: absolute;
+  inset: -22%;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--reveal-glow) 0%, rgba(0, 0, 0, 0) 62%);
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+.reveal-bloom.is-flaring {
+  animation: bloom-flare 1.7s ease-out both;
+}
+
+@keyframes bloom-flare {
+  0% {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  16% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.3);
+  }
+}
+
+/* Shockwave rings, sized to the die's own silhouette (~74% of the stage)
+   so they visibly leave its edge and expand outward. Two, the second
+   trailing the first by a beat. */
+.reveal-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 74%;
+  height: 74%;
+  margin: -37% 0 0 -37%;
+  border-radius: 50%;
+  border: 1.5px solid var(--reveal-color);
+  box-shadow: 0 0 14px var(--reveal-glow), inset 0 0 14px var(--reveal-glow);
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+.reveal-ring.is-bursting {
+  animation: ring-burst 1.15s cubic-bezier(0.1, 0.7, 0.2, 1) both;
+}
+
+.reveal-ring-b.is-bursting {
+  animation-duration: 1.4s;
+  animation-delay: 150ms;
+}
+
+@keyframes ring-burst {
+  0% {
+    opacity: 0.95;
+    transform: scale(0.98);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.8);
+  }
+}
+
+/* Embers: a pool of tiny dots (created once by app.js) that each fly from
+   a point on the die's rim (--sx/--sy) out to a farther, slightly higher
+   point (--ex/--ey), fading as they go. Per-particle start/end/delay/
+   duration are set as inline custom properties per burst; the keyframes
+   just read them. */
+.ember-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.ember {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  margin: -1.5px 0 0 -1.5px;
+  border-radius: 50%;
+  background: var(--reveal-color);
+  box-shadow: 0 0 8px 1px var(--reveal-glow);
+  opacity: 0;
+  transform: translate(var(--sx, 0), var(--sy, 0));
+}
+
+.ember.is-live {
+  animation: ember-fly var(--et, 1.4s) cubic-bezier(0.15, 0.6, 0.3, 1) var(--ed, 0ms) both;
+}
+
+@keyframes ember-fly {
+  0% {
+    opacity: 0;
+    transform: translate(var(--sx, 0), var(--sy, 0)) scale(0.3);
+  }
+  14% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--ex, 0), var(--ey, 0)) scale(1);
+  }
 }
 
 /* Camera-viewfinder overlay on top of the die: corner brackets frame the
@@ -435,31 +761,146 @@ main {
   display: none;
 }
 
+/* --- the verdict --- */
+
+.answer-frame {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
+  margin-top: 4vh;
+  min-height: 4.6rem; /* prompt, seeking and verdict all fit: no layout jump between states */
+  justify-content: center;
+}
+
+/* Hairline rules above and below the words, invisible at rest; they draw
+   themselves out from the center as the verdict materializes. */
+.answer-rule {
+  display: block;
+  width: min(220px, 60vw);
+  height: 1px;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0), var(--reveal-color), rgba(0, 0, 0, 0));
+  opacity: 0;
+  transform: scaleX(0);
+  transition: opacity 0.4s ease, transform 0.4s ease; /* soft exit when the next roll clears them */
+}
+
+.answer-frame.is-revealed .answer-rule {
+  animation: rule-draw 1.1s cubic-bezier(0.2, 0.7, 0.2, 1) 0.3s both;
+}
+
+@keyframes rule-draw {
+  0% {
+    opacity: 0;
+    transform: scaleX(0);
+  }
+  100% {
+    opacity: 0.75;
+    transform: scaleX(1);
+  }
+}
+
 .dice-answer {
   margin: 0;
-  margin-top: 5vh;
   font-family: "Cinzel", Cambria, "Times New Roman", serif;
-  font-size: 1.4rem;
+  font-size: 1.55rem;
   font-weight: 700;
-  letter-spacing: 0.02em;
-  color: var(--gold);
-  text-shadow: 0 0 14px rgba(212, 175, 55, 0.45);
+  letter-spacing: 0.06em;
+  color: var(--reveal-color);
+  text-shadow: 0 0 18px var(--reveal-glow);
+  transition: color 0.8s ease, text-shadow 0.8s ease;
+}
+
+/* At rest, before any result: an invitation rather than an instruction,
+   small and spaced and slowly breathing. */
+.dice-answer.is-prompt {
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(244, 244, 245, 0.6);
+  text-shadow: none;
+  animation: prompt-breathe 5s ease-in-out infinite;
+}
+
+@keyframes prompt-breathe {
+  0%, 100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+/* While the die is in motion: the question is being asked. Opacity-only
+   pulse so the suspense costs nothing per frame. */
+.dice-answer.is-seeking {
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: rgba(244, 244, 245, 0.55);
+  text-shadow: none;
+  animation: seeking-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes seeking-pulse {
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+/* The verdict coalesces out of nothing: blurred, spread wide and slightly
+   oversized, condensing into crisp focus. One-shot, so the blur here is a
+   fraction of a second per reveal, not an always-on cost. */
+.dice-answer.is-revealed {
+  animation: answer-materialize 1.1s cubic-bezier(0.2, 0.7, 0.15, 1) both;
+}
+
+@keyframes answer-materialize {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(1.08);
+    letter-spacing: 0.4em;
+    filter: blur(8px);
+  }
+  55% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+    letter-spacing: 0.06em;
+    filter: none; /* not blur(0): leave no filter at all on the settled text */
+  }
 }
 
 .status {
-  opacity: 0.7;
-  font-size: 0.95rem;
+  opacity: 0.45;
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
   min-height: 1.2em;
 }
 
+/* iOS sensor-permission gate: an outlined gold invitation in the same
+   engraved face as the verdict, not a bright filled button. */
 .enable-motion {
-  background: var(--accent);
-  color: #1a1408;
-  border: none;
+  background: transparent;
+  color: var(--gold);
+  border: 1px solid rgba(212, 175, 55, 0.55);
   border-radius: 999px;
-  padding: 0.75rem 1.5rem;
-  font-size: 1rem;
-  font-weight: 600;
+  padding: 0.7rem 1.6rem;
+  font-family: "Cinzel", Cambria, "Times New Roman", serif;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  box-shadow: 0 0 18px rgba(212, 175, 55, 0.15);
   cursor: pointer;
 }
 
@@ -471,14 +912,15 @@ main {
   right: 0.75rem;
   background: transparent;
   color: var(--fg);
-  border: 1px solid rgba(244, 244, 245, 0.25);
+  border: none;
   border-radius: 999px;
-  width: 2rem;
-  height: 2rem;
-  font-size: 0.9rem;
+  width: 2.2rem;
+  height: 2.2rem;
+  font-size: 1rem;
   line-height: 1;
-  opacity: 0.35;
+  opacity: 0.22;
   cursor: pointer;
+  z-index: 5; /* above .cosmos and main */
 }
 
 .settings-toggle:active {
@@ -636,4 +1078,26 @@ main {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   opacity: 0.75;
   text-align: right;
+}
+
+/* Reduced motion: keep the atmosphere (colors, glow, the verdict's tint)
+   but stop everything that moves on its own forever -- stars, mist, the
+   turning sigils, the breathing prompt -- and the ember burst. The reveal
+   keeps its short one-shot ring and text fade so a result still lands as
+   a moment rather than a silent swap. */
+@media (prefers-reduced-motion: reduce) {
+  .stars,
+  .mist-blob,
+  .sigil-svg,
+  .dice-answer.is-prompt,
+  .dice-answer.is-seeking,
+  .ember.is-live,
+  .reveal-bloom.is-flaring {
+    animation: none;
+  }
+
+  .dice-answer.is-prompt,
+  .dice-answer.is-seeking {
+    opacity: 0.7;
+  }
 }
