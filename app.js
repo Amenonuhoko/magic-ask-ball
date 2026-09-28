@@ -37,11 +37,6 @@ const revealRingAEl = document.getElementById("reveal-ring-a");
 const revealRingBEl = document.getElementById("reveal-ring-b");
 const emberLayerEl = document.getElementById("ember-layer");
 
-// The one-line hint under the die once sensors are live. Cleared the first
-// time a result is revealed -- by then it's been demonstrated, and the
-// verdict deserves the space to itself.
-const READY_HINT = "hold the screen · shake or flick to ask";
-
 function setStatus(text) {
   statusEl.textContent = text;
 }
@@ -465,14 +460,14 @@ function initOrientation() {
       if (orientationOk) {
         enableBtn.hidden = true;
         startListening();
-        setStatus(motionOk ? READY_HINT : "Gyro/shake permission denied — tilt features only.");
+        setStatus(motionOk ? "" : "Gyro/shake permission denied — tilt features only.");
       } else {
         setStatus("Sensor permission denied.");
       }
     });
   } else {
     startListening();
-    setStatus(READY_HINT);
+    setStatus("");
   }
 }
 
@@ -1001,16 +996,10 @@ function initDiceScene() {
   camera = new THREE.PerspectiveCamera(45, 1, 0.1, 10);
   camera.position.set(0, 0, 3.2);
 
-  // Two-tone rather than neutral white: a warm, candle-gold key light and a
-  // cold violet rim, with a violet-tinted ambient so the obsidian's shadow
-  // side reads as deep dusk rather than dead black. Same three lights,
-  // same cost -- only their colors changed -- and the gold numerals stay
-  // legible because the key (the light the camera-facing face actually
-  // catches) is only warmed, not dimmed.
-  const ambient = new THREE.AmbientLight(0x9d94c8, 0.34);
-  const key = new THREE.DirectionalLight(0xffe9c4, 1.15);
+  const ambient = new THREE.AmbientLight(0xffffff, 0.35);
+  const key = new THREE.DirectionalLight(0xffffff, 1.1);
   key.position.set(2, 3, 4);
-  const rim = new THREE.DirectionalLight(0x6f7cff, 0.7);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.5);
   rim.position.set(-3, -1, 2);
   scene.add(ambient, key, rim);
 
@@ -1687,7 +1676,7 @@ function cancelPendingReveal() {
 function setAnswerSeeking() {
   cancelPendingReveal();
   answerFrameEl.classList.remove("is-revealed");
-  diceAnswerEl.classList.remove("is-prompt", "is-revealed");
+  diceAnswerEl.classList.remove("is-revealed");
   diceAnswerEl.classList.add("is-seeking");
   diceAnswerEl.textContent = SEEKING_TEXT;
 }
@@ -1711,11 +1700,10 @@ function playReveal(faceNumber, phrase, quiet) {
 
   pendingRevealTimer = setTimeout(() => {
     pendingRevealTimer = null;
-    diceAnswerEl.classList.remove("is-prompt", "is-seeking");
+    diceAnswerEl.classList.remove("is-seeking");
     diceAnswerEl.textContent = phrase;
     restartAnimation(diceAnswerEl, "is-revealed");
     restartAnimation(answerFrameEl, "is-revealed");
-    if (statusEl.textContent === READY_HINT) setStatus("");
   }, quiet ? QUIET_REVEAL_TEXT_DELAY_MS : REVEAL_TEXT_DELAY_MS);
 }
 

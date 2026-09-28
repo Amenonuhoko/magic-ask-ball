@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#07060c" />
+  <meta name="theme-color" content="#0b0d12" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Ask Ball" />
@@ -20,15 +20,6 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <!-- Fixed star field behind everything. Two single-element layers whose
-       many box-shadows are painted once and then only ever animate opacity
-       (a slow, offset twinkle), so the compositor carries them for close to
-       nothing -- same discipline as the mist: no filters, no per-frame
-       repaint. -->
-  <div class="cosmos" aria-hidden="true">
-    <div class="stars stars-a"></div>
-    <div class="stars stars-b"></div>
-  </div>
   <main>
     <div id="stage" class="stage">
       <!-- Sigil preview, drawn BEHIND the die on purpose (same reasoning as
@@ -200,12 +191,13 @@
       <div id="ember-layer" class="ember-layer" aria-hidden="true"></div>
     </div>
     <!-- The verdict. Bracketed by two hairline rules that draw themselves in
-         as the words materialize; the text itself is the prompt at rest,
-         a pulsing "Seeking" while the die is in motion, and the revealed
-         phrase (tinted by outcome) after the event. -->
+         as the words materialize; the text itself is empty at rest (no
+         instructions -- the die speaks only when asked), a pulsing
+         "Seeking" while the die is in motion, and the revealed phrase
+         (tinted by outcome) after the event. -->
     <div id="answer-frame" class="answer-frame">
       <span class="answer-rule" aria-hidden="true"></span>
-      <p id="dice-answer" class="dice-answer is-prompt">Hold a question in mind</p>
+      <p id="dice-answer" class="dice-answer"></p>
       <span class="answer-rule" aria-hidden="true"></span>
     </div>
     <p id="status" class="status">Loading…</p>

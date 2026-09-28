@@ -1,13 +1,13 @@
 {
   "name": "Magic Ask Ball",
   "short_name": "Ask Ball",
-  "description": "Hold a question in mind, hold the screen, and shake. The die will answer.",
+  "description": "An obsidian d20 that answers.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#07060c",
-  "theme_color": "#07060c",
+  "background_color": "#0b0d12",
+  "theme_color": "#0b0d12",
   "icons": [
     {
       "src": "icons/icon-192.png",
