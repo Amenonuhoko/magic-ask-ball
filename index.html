@@ -153,26 +153,63 @@
                  M 87 50 A 37 37 0 1 0 13 50 A 37 37 0 1 0 87 50 Z"
             />
           </clipPath>
+          <!-- Bezel bevel: a turned metal ring lit from the upper left,
+               falling into shadow at the lower right. -->
+          <linearGradient id="lens-bezel-gradient" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.34" />
+            <stop offset="45%" stop-color="#ffffff" stop-opacity="0.1" />
+            <stop offset="100%" stop-color="#ffffff" stop-opacity="0.05" />
+          </linearGradient>
+          <!-- Tube vignette: perfectly clear through the middle (the die is
+               never touched), darkening only in the last quarter toward
+               the rim so the view reads as looking down a barrel. -->
+          <radialGradient id="lens-vignette-gradient">
+            <stop offset="74%" stop-color="#000000" stop-opacity="0" />
+            <stop offset="100%" stop-color="#000000" stop-opacity="0.5" />
+          </radialGradient>
+          <!-- Broad, soft reflection on the glass, upper left. -->
+          <radialGradient id="lens-sheen-gradient" cx="36%" cy="32%" r="42%">
+            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.075" />
+            <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
+          </radialGradient>
         </defs>
 
-        <!-- corner brackets: frame the die like a camera viewfinder, and
-             double as the lock indicator — dim grey by default (locked,
-             can't roll), gradually turning solid gold and glowing while
-             held down (armed to roll, see .is-held/pointerHeld in app.js),
-             a quieter gold while a result is revealed and frozen (see
-             .is-frozen). No separate icon. -->
-        <path class="vf-bracket" d="M 4 16 L 4 4 L 16 4" />
-        <path class="vf-bracket" d="M 84 4 L 96 4 L 96 16" />
-        <path class="vf-bracket" d="M 96 84 L 96 96 L 84 96" />
-        <path class="vf-bracket" d="M 16 96 L 4 96 L 4 84" />
+        <!-- The glass itself: a round eyepiece rather than square corner
+             brackets. Vignette and sheen are static gradient fills, the
+             glints static strokes -- nothing here animates on its own. -->
+        <circle cx="50" cy="50" r="47" class="lens-vignette" />
+        <circle cx="50" cy="50" r="47" class="lens-sheen" />
 
         <!-- very subtle readout of tilt since the die came to rest; fills
              vertically like a rising liquid level, but clipped to a donut
              (see escape-fill-clip above) so it only ever forms a ring
-             hugging the die's edge, purely informational -->
-        <circle cx="50" cy="50" r="47" class="escape-ring-track" />
+             hugging the inside of the bezel, purely informational -->
         <rect id="escape-ring-fill" class="escape-ring-fill" x="0" y="100" width="100" height="0"
           clip-path="url(#escape-fill-clip)" />
+
+        <!-- Glints: a long highlight arc upper left and a short counter
+             glint lower right, both just inside the bezel, the way light
+             catches a curved lens. -->
+        <path class="lens-glint" d="M 11 35.8 A 41.5 41.5 0 0 1 34.5 11.5" />
+        <path class="lens-glint lens-glint-minor" d="M 86.6 69.5 A 41.5 41.5 0 0 1 77.8 80.8" />
+
+        <!-- Bezel, outside in: the beveled metal ring (static), the status
+             rim (the old brackets' job: dim grey = locked, solid glowing
+             gold while held = armed to roll, quieter gold while a result
+             is frozen -- see .is-held/.is-frozen), and a faint inner
+             hairline that doubles as the fanfare's second flash layer. -->
+        <circle cx="50" cy="50" r="47.6" class="lens-bezel" />
+        <!-- The rim's glow is two wider, fainter copies of it underneath
+             (invisible until held / a fanfare) rather than a CSS
+             drop-shadow filter: a filter rasterizes a rectangular region
+             around the element, which on this dark ground showed up as a
+             faint square tint around the round frame -- and it recomputed
+             every frame for as long as the screen was held. Plain strokes
+             animating stroke-opacity have neither problem. -->
+        <circle cx="50" cy="50" r="46.3" class="vf-rim-glow vf-rim-glow-wide" />
+        <circle cx="50" cy="50" r="46.3" class="vf-rim-glow vf-rim-glow-mid" />
+        <circle cx="50" cy="50" r="46.3" class="vf-rim" />
+        <circle cx="50" cy="50" r="44" class="vf-rim-inner" />
 
         <!-- how the current result was revealed: only ever the "paused by
              holding still" glyph now, since a plain tap no longer reveals

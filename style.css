@@ -40,8 +40,14 @@ html, body {
   user-select: none;
 }
 
+/* The original near-black grey, with a faint muted lift toward the center
+   -- a middle ground between a flat fill and a colored nebula: enough of
+   a vignette to pull the eye to the eyepiece, no hue of its own. Static
+   gradient, painted once. */
 body {
-  background: var(--bg);
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 45%, rgba(150, 160, 185, 0.085) 0%, rgba(150, 160, 185, 0.03) 45%, rgba(0, 0, 0, 0) 75%),
+    var(--bg);
   color: var(--fg);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   display: flex;
@@ -326,12 +332,13 @@ main {
   }
 }
 
-/* Camera-viewfinder overlay on top of the die: corner brackets frame the
-   stage AND double as the lock indicator (see .is-held below), a very
-   subtle vertical fill shows tilt-since-rest, and a small icon (rather
-   than text) shows when the current result was revealed by the phone
-   going still. Everything here is information that used to live in
-   separate widgets, now co-located in one glanceable spot. */
+/* Eyepiece overlay on top of the die: a round glass-and-bezel frame (in
+   place of the old square corner brackets) whose status rim doubles as
+   the lock indicator (see .is-held below), a very subtle vertical fill
+   shows tilt-since-rest, and a small icon (rather than text) shows when
+   the current result was revealed by the phone going still. Everything
+   here is information that used to live in separate widgets, now
+   co-located in one glanceable spot. */
 .viewfinder {
   position: absolute;
   inset: -12px;
@@ -340,38 +347,87 @@ main {
   pointer-events: none;
 }
 
-.vf-bracket {
-  fill: none;
-  stroke: rgba(140, 140, 145, 0.16);
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  filter: none;
-  transition: stroke 0.6s ease, stroke-width 0.4s ease, filter 0.6s ease;
+/* The glass: static gradient fills (see the <defs> in index.html) and two
+   static highlight arcs. No filters, no animation -- painted once. */
+.lens-vignette {
+  fill: url(#lens-vignette-gradient);
 }
 
-/* Brackets turn gold when a result is revealed by the phone going still —
+.lens-sheen {
+  fill: url(#lens-sheen-gradient);
+}
+
+.lens-glint {
+  fill: none;
+  stroke: #ffffff;
+  stroke-opacity: 0.2;
+  stroke-width: 1.1;
+  stroke-linecap: round;
+}
+
+.lens-glint-minor {
+  stroke-opacity: 0.09;
+  stroke-width: 0.8;
+}
+
+.lens-bezel {
+  fill: none;
+  stroke: url(#lens-bezel-gradient);
+  stroke-width: 1.6;
+}
+
+/* The status rim runs along the inside of the bezel. */
+.vf-rim {
+  fill: none;
+  stroke: rgba(140, 140, 145, 0.18);
+  stroke-width: 1.2;
+  transition: stroke 0.6s ease, stroke-width 0.4s ease;
+}
+
+/* Its glow: two wider strokes under it, each with its own peak opacity
+   (--glow-peak, read by the held state and the fanfare keyframes alike).
+   No filter involved -- see the note by these circles in index.html. */
+.vf-rim-glow {
+  fill: none;
+  stroke: var(--gold);
+  stroke-opacity: 0;
+  transition: stroke-opacity 0.6s ease, stroke 0.6s ease;
+}
+
+.vf-rim-glow-wide {
+  --glow-peak: 0.14;
+  stroke-width: 9;
+}
+
+.vf-rim-glow-mid {
+  --glow-peak: 0.32;
+  stroke-width: 4;
+}
+
+.vf-rim-inner {
+  fill: none;
+  stroke: rgba(212, 175, 55, 0.12);
+  stroke-width: 0.4;
+}
+
+/* The rim turns gold when a result is revealed by the phone going still —
    a "focus confirmed" cue instead of a text label. */
-.viewfinder.is-frozen .vf-bracket {
+.viewfinder.is-frozen .vf-rim {
   stroke: rgba(212, 175, 55, 0.5);
 }
 
-/* The lock indicator IS the brackets, not a separate icon: grey/dim above
-   is "locked" (shaking can't roll the die); holding the screen down
-   gradually turns them a solid gold and sets them glowing, to say "armed —
+/* The lock indicator IS the rim, not a separate icon: grey/dim above is
+   "locked" (shaking can't roll the die); holding the screen down
+   gradually turns it a solid gold and sets it glowing, to say "armed —
    shake now to roll". Declared after .is-frozen so it wins when both are
    true (holding is the more time-critical, in-the-moment cue). */
-/* Three stacked drop-shadows (tight/mid/wide) rather than two -- two radii
-   with a big jump between them (3px/9px) read as a bright core with a
-   visible ring around it rather than one smooth glow, especially on the
-   bracket's sharp corner. Adding a middle step and easing the opacities
-   down more gradually between them smooths that into a single continuous
-   falloff instead of two visible bands. */
-.viewfinder.is-held .vf-bracket {
+.viewfinder.is-held .vf-rim {
   stroke: var(--gold);
-  stroke-width: 2;
-  filter: drop-shadow(0 0 2px rgba(212, 175, 55, 0.8)) drop-shadow(0 0 6px rgba(212, 175, 55, 0.5))
-    drop-shadow(0 0 14px rgba(212, 175, 55, 0.28));
+  stroke-width: 1.7;
+}
+
+.viewfinder.is-held .vf-rim-glow {
+  stroke-opacity: var(--glow-peak);
 }
 
 /* PREVIEW ONLY -- see the matching comments in index.html. Scaled way up
@@ -477,35 +533,43 @@ main {
 @keyframes fanfare-success-flash {
   0% {
     stroke: rgba(212, 175, 55, 0.5);
-    stroke-width: 1.5;
+    stroke-width: 1.2;
   }
   15%, 45%, 75%, 100% {
     stroke: #fff4cc;
-    stroke-width: 2.5;
+    stroke-width: 2;
   }
 }
 
-@keyframes fanfare-success-hum {
+/* The hum breathes the glow rings' opacity between about half and all of
+   each ring's own --glow-peak (the same peaks the held state uses), so
+   the fanfare glow and the held glow are one continuous vocabulary. */
+@keyframes fanfare-glow-hum {
   0%, 100% {
-    filter: drop-shadow(0 0 9px rgba(212, 175, 55, 0.75));
+    stroke-opacity: calc(var(--glow-peak) * 1.2);
   }
   50% {
-    filter: drop-shadow(0 0 16px rgba(212, 175, 55, 0.95));
+    stroke-opacity: calc(var(--glow-peak) * 2.2);
   }
 }
 
-.viewfinder.is-critical-success .vf-bracket {
-  animation: fanfare-success-flash 1.6s ease-in-out 1 forwards, fanfare-success-hum 2.4s ease-in-out infinite;
+.viewfinder.is-critical-success .vf-rim {
+  animation: fanfare-success-flash 1.6s ease-in-out 1 forwards;
+}
+
+.viewfinder.is-critical-success .vf-rim-glow {
+  stroke: var(--gold);
+  animation: fanfare-glow-hum 2.4s ease-in-out infinite;
 }
 
 @keyframes fanfare-success-track-flash {
   0% {
-    stroke: rgba(212, 175, 55, 0.08);
-    stroke-width: 1.5;
+    stroke: rgba(212, 175, 55, 0.12);
+    stroke-width: 0.4;
   }
   15%, 45%, 75%, 100% {
-    stroke: rgba(255, 244, 204, 0.95);
-    stroke-width: 3;
+    stroke: rgba(255, 244, 204, 0.9);
+    stroke-width: 1.2;
   }
 }
 
@@ -518,27 +582,18 @@ main {
   }
 }
 
-.viewfinder.is-critical-success .escape-ring-track {
+.viewfinder.is-critical-success .vf-rim-inner {
   animation: fanfare-success-track-flash 1.6s ease-in-out 1 forwards, fanfare-track-hum 2.4s ease-in-out infinite;
 }
 
 @keyframes fanfare-fail-flash {
   0% {
     stroke: rgba(212, 175, 55, 0.5);
-    stroke-width: 1.5;
+    stroke-width: 1.2;
   }
   10%, 30%, 50%, 100% {
     stroke: #ff4d4d;
-    stroke-width: 2.5;
-  }
-}
-
-@keyframes fanfare-fail-hum {
-  0%, 100% {
-    filter: drop-shadow(0 0 5px rgba(255, 60, 60, 0.75));
-  }
-  50% {
-    filter: drop-shadow(0 0 10px rgba(255, 60, 60, 1));
+    stroke-width: 2;
   }
 }
 
@@ -557,29 +612,28 @@ main {
   }
 }
 
-.viewfinder.is-critical-fail .vf-bracket {
-  animation: fanfare-fail-flash 1.6s ease-in-out 1 forwards, fanfare-fail-hum 2s ease-in-out infinite, fanfare-fail-shake 0.15s ease-in-out 6;
+.viewfinder.is-critical-fail .vf-rim {
+  animation: fanfare-fail-flash 1.6s ease-in-out 1 forwards, fanfare-fail-shake 0.15s ease-in-out 6;
+}
+
+.viewfinder.is-critical-fail .vf-rim-glow {
+  stroke: #ff3c3c;
+  animation: fanfare-glow-hum 2s ease-in-out infinite;
 }
 
 @keyframes fanfare-fail-track-flash {
   0% {
-    stroke: rgba(212, 175, 55, 0.08);
-    stroke-width: 1.5;
+    stroke: rgba(212, 175, 55, 0.12);
+    stroke-width: 0.4;
   }
   10%, 30%, 50%, 100% {
     stroke: rgba(255, 77, 77, 0.85);
-    stroke-width: 2.5;
+    stroke-width: 1.1;
   }
 }
 
-.viewfinder.is-critical-fail .escape-ring-track {
+.viewfinder.is-critical-fail .vf-rim-inner {
   animation: fanfare-fail-track-flash 1.6s ease-in-out 1 forwards, fanfare-track-hum 2s ease-in-out infinite;
-}
-
-.escape-ring-track {
-  fill: none;
-  stroke: rgba(212, 175, 55, 0.08);
-  stroke-width: 1.5;
 }
 
 .escape-ring-fill {
